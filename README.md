@@ -8,6 +8,7 @@ HanaAgent 插件公开集合。每个插件独立目录，即开即用。
 |---|---|---|
 | [ns-new-session](plugins/ns-new-session/) | 1.0.0 | `/ns` 快捷命令：新建桌面级会话，弥补移动端 `/new` 不能创建桌面会话的问题 |
 | [download-progress](plugins/download-progress/) | 1.6.0 | 下载进度条：Agent 下载文件时显示实时进度卡片（百分比/总大小/速度/已完成量），支持限速、wait 回查、断点恢复、停滞检测 |
+| [qq-group-patrol-skill](qq-group-patrol-skill/) | 1.1 | QQ 群定时巡检 skill：chatlog-keeper 直读本地库，生成数据概览/群友有价值发言/群文件巡检报告，可 cron 定时推微信 |
 
 ## 安装
 
