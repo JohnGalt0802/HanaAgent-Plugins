@@ -1,0 +1,51 @@
+{
+  "manifestVersion": 1,
+  "id": "download-progress",
+  "name": "下载进度条",
+  "version": "1.6.0",
+  "description": "Agent 下载文件时，在操作块下方显示实时进度条卡片：百分比、文件总大小、下载速度、已完成量。下载完成后可直接打开文件或复制路径。",
+  "author": "大花",
+  "minAppVersion": "0.158.0",
+  "trust": "full-access",
+  "ui": {
+    "hostCapabilities": [
+      "resource.open",
+      "clipboard.writeText"
+    ]
+  },
+  "contributes": {
+    "configuration": {
+      "title": "下载进度条设置",
+      "properties": {
+        "defaultSaveDir": {
+          "type": "string",
+          "default": "",
+          "title": "默认保存目录（可选）",
+          "description": "下载文件的默认保存目录（绝对路径）。留空则保存到插件数据目录 downloads/ 下。"
+        },
+        "waitMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "default": "auto",
+          "title": "回查模式",
+          "description": "download-wait 默认等待策略：auto=按文件总大小自动估算等待阈值（本地计算，不费模型算力）；manual=使用下方手动默认阈值。Agent 显式传 mode 参数时以参数为准。"
+        },
+        "manualTimeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "title": "手动默认阈值（毫秒）",
+          "description": "manual 模式下 download-wait 的默认等待时长（Agent 未传 timeoutMs 时使用）。"
+        },
+        "stallTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "title": "停滞判定阈值（毫秒）",
+          "description": "下载任务无新数据超过该时长判定为停滞，并后台通知 Agent 决策。"
+        }
+      }
+    }
+  }
+}

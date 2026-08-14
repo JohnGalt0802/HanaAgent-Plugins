@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 1,
+  "id": "ns-new-session",
+  "name": "NS - 新建桌面会话",
+  "version": "1.0.0",
+  "description": "/ns 快捷命令：新建桌面级会话，弥补移动端 /new 不能创建桌面会话的问题",
+  "trust": "full-access",
+  "minAppVersion": "0.82.0",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ns",
+        "title": "新建桌面会话",
+        "tool": "ns-new-session_ns"
+      }
+    ],
+    "configuration": {
+      "properties": {
+        "enableNsTool": {
+          "type": "boolean",
+          "default": true,
+          "title": "启用 /ns 命令",
+          "description": "启用后在任意对话中输入 /ns 即可新建桌面级会话",
+          "reloadRequired": false
+        }
+      }
+    }
+  }
+}
