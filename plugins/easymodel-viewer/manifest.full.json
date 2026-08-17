@@ -1,0 +1,44 @@
+{
+  "manifestVersion": 1,
+  "id": "easymodel-viewer",
+  "name": "EasyModel 模型查看器",
+  "version": "1.5.0",
+  "description": "在 Hana 内直接渲染 STL / OBJ / PLY / GLB / GLTF / 3MF / STEP / IGES 工程模型。支持打开文件夹并横向预览浏览多个模型，可在右侧栏或中间栏显示。",
+  "author": "大花",
+  "minAppVersion": "0.159.0",
+  "trust": "full-access",
+  "activationEvents": ["onStartup"],
+  "ui": {
+    "hostCapabilities": [
+      "resource.pick"
+    ]
+  },
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "placement": {
+          "type": "string",
+          "enum": ["right", "center"],
+          "default": "right",
+          "title": "查看器位置",
+          "description": "右侧栏：点击右上角图标，在右侧面板中打开查看器；中间栏：在中间主区域打开查看器（顶部标签页进入）。"
+        }
+      }
+    },
+    "widget": {
+      "title": "EasyModel 模型查看",
+      "route": "/viewer",
+      "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M12 2l8 4.5v9L12 20l-8-4.5v-9z\"/><path d=\"M12 11L4 6.5M12 11l8-4.5M12 11v9\"/></svg>"
+    },
+    "page": {
+      "title": "EasyModel 模型查看",
+      "route": "/viewer/center"
+    },
+    "routes": [
+      "./routes/viewer.js"
+    ],
+    "tools": [
+      "./tools/open-model.js"
+    ]
+  }
+}
