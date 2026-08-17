@@ -9,8 +9,8 @@ Agent 执行下载任务时，在操作块下方显示**实时进度条卡片**�
 - 取消下载按钮
 - 完成后：打开文件 / 打开所在文件夹 / 复制路径
 - 左侧折叠按钮：`❯` 展开/收起本条详情，`□` 展开/收起所有下载卡片
-- 停滞检测：连接无新数据超过阈值（默认 30s，可配置 stallTimeoutMs）判定停滞，卡片标记 stalled 徽标并**后台通知 Agent 决策**（不自动取消）
-- 失败后端提醒：下载失败时唤醒 Agent 会话（通知包含失败原因），Agent 自主决策重试/换源
+- 停滞检测：连接无新数据超过阈值（默认 30s，可配置 stallTimeoutMs）判定停滞，卡片标记 stalled 徽标并**实时提醒 Agent 决策**（不自动取消）
+- 失败实时提醒：下载失败时尝试立即注入会话（session:send，Agent 空闲即达；回合活跃则放弃不排队），Agent 自主决策重试/换源
 
 ---
 
@@ -110,8 +110,12 @@ ETA 超预期→换源；完成→直接使用文件；失败→按错误决定�
 **推荐流程**：
 1. `download-file` 启动下载
 2. `download-wait(taskId)`（auto 自动估算阈值），到点/完成后按快照决策
-3. 下载完成时插件通过 deferred 机制把任务状态记录到会话（notify_ui_only，不唤醒 Agent turn——
-   前端卡片已实时可视化，Agent 需要时用 download-wait 主动查状态即可）
+3. **未完成且决定继续 → 立即再调 download-wait 跟进**（续接铁律），直到 done/failed/放弃；无排队通知，实时状态一律以 wait 回查为准
+
+**通知策略（无排队通知，全实时）**：
+- `download-wait` 主动轮询是唯一实时主路径（秒级，失败/完成/停滞立即返回）
+- 失败/停滞的被动提醒：尝试 `session:send` 立即注入（Agent 空闲即达）；宿主拒绝（session_busy，回合活跃）则放弃，不排队
+- 成功不通知（wait 查即可）；无 deferred 回合边界排队通知
 
 ## 配套工具 download-command（命令型下载：git clone / pnpm install）
 
@@ -202,4 +206,4 @@ app/card.js           卡片前端（轮询进度，折叠交互，mini host SDK
 - v1.5.1：download-cancel 工具（Agent 侧取消，实测 canceled + 半成品删除）；失败后端提醒（notifyAgentOnFailure 唤醒 Agent，404 实测通知送达含原因）；停滞触发即刷盘；wait 透出 stalledAt
 - v1.5.2：修复 chunked（无 Content-Length）下载“完成但进度条半截”渲染 bug。根因：GitHub codeload 动态打包 zip 返回 chunked 响应 → total=null → percent=null → 终态未脱离不确定态（CSS .dl-bar.indet 固定 40% 宽条纹）。修复：渲染层终态（done/failed/canceled/interrupted）强制脱离 indet、done 满条 100% + 数据层正常收尾路径 total=received 兑底 + restore 历史 done 任务兑底 + wait 卡死检测覆盖 chunked。红线：catch 分支 complete 判定勿放宽（残缺文件误判完成比删文件更糟）。验证：harness 5/5 + 四并发（3 带 CL + 1 chunked）全绿、字节零缺漏
 - v1.5.3：完成态新增“文件夹”按钮（resource.open + mode:reveal → showInFinder，打开所在文件夹并选中文件）；“打开”按钮改为系统默认程序打开文件（原为 reveal 定位，与新按钮语义重复）
-- v1.6.0：命令型下载任务（git clone / pnpm install）。新建 `lib/progress-parsers.js`（纯函数解析器，git 无状态 / pnpm 状态化防累加）、`tools/download-command.js`（白名单命令工具）；`lib/dlcore.js` MGR_VER 12、task 增 kind/cmd/unit/stage/child 字段、停滞监视器提取 `_startStallMonitor/_stopStallMonitor`、`_runCommand` 用 spawn 跑命令（数组传参、缓冲截断 4KB）、cancel 加 Windows taskkill /T /F 杀进程树、snapshot/_persist/restore 同步字段（restore 时 command 中断按 cmd.type 分支删/留半成品）；卡片按 unit 显示大小、运行中 meta 追加阶段文案、命令型完成态只给 打开文件夹+复制路径。
+- v1.6.0：命令型下载任务（git clone / pnpm install）。新建 `lib/progress-parsers.js`（纯函数解析器，git 无状态 / pnpm 状态化防累加）、`tools/download-command.js`（白名单命令工具）；`lib/dlcore.js` MGR_VER 12、task 增 kind/cmd/unit/stage/child 字段、停滞监视器提取 `_startStallMonitor/_stopStallMonitor`、`_runCommand` 用 spawn 跑命令（数组传参、缓冲截断 4KB）、命令解析 `resolveCommandBin`（Windows 兼容：npm 全局装的 pnpm 是 .cmd shim，裸 spawn shell:false 执行不了（EINVAL），解析 `pnpm/bin/pnpm.mjs|cjs` 用 node 运行，保持无 shell 无注入面）、cancel 加 Windows taskkill /T /F 杀进程树、snapshot/_persist/restore 同步字段（restore 时 command 中断按 cmd.type 分支删/留半成品）；卡片按 unit 显示大小、运行中 meta 追加阶段文案、命令型完成态只给 打开文件夹+复制路径。验证：解析器单测 13/13、pnpm/git 真实全链路 done、四并发混合（2 pnpm + 1 git + 1 url chunked）4/4 done 互不干扰、进度可见性（git checkout 28%→100% 连续推进 / pnpm 阶段映射）、宿主重启后新会话工具注册可见、UI 卡片经用户确认进度条与完成态按钮正常。

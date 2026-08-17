@@ -70,22 +70,6 @@ export async function execute(input, toolCtx) {
     sessionPath: toolCtx.sessionPath,
   });
 
-  // 注册 deferred 占位：下载完成/失败时宿主记录状态（UI 记录，不触发 Agent turn——
-  // 前端卡片已实时可视化，Agent 需要时用 download-wait 主动查状态即可）
-  // 例外：任务失败（failed）时通过 notifyAgentOnFailure 唤醒 Agent 后端处理（重试/换源决策）。
-  try {
-    await toolCtx.bus.request("deferred:register", {
-      taskId: task.taskId,
-      sessionPath: toolCtx.sessionPath,
-      meta: {
-        type: "download",
-        label: task.fileName,
-        deliveryIntent: "notify_ui_only",
-        notifyAgentOnFailure: true,
-      },
-    });
-  } catch (e) { /* 注册失败不阻塞下载（卡片仍可用） */ }
-
   const snap = manager.snapshot(task.taskId);
 
   return {

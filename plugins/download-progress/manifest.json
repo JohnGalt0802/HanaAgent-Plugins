@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "download-progress",
   "name": "下载进度条",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Agent 下载文件时，在操作块下方显示实时进度条卡片：百分比、文件总大小、下载速度、已完成量。下载完成后可直接打开文件或复制路径。",
   "author": "大花",
   "minAppVersion": "0.158.0",
