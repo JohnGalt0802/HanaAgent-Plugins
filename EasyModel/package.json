@@ -1,0 +1,113 @@
+{
+  "name": "easymodel",
+  "productName": "EasyModel",
+  "version": "1.2.0",
+  "description": "EasyModel - 清凉 3D 模型查看器（STL/OBJ/PLY/GLB/3MF/STEP/IGES）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "author": "老大",
+  "license": "MIT",
+  "dependencies": {
+    "occt-import-js": "0.0.23",
+    "three": "^0.185.0"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.easymodel.viewer",
+    "productName": "EasyModel",
+    "directories": {
+      "output": "release"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "vendor/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/occt-import-js/**"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "stl",
+        "name": "EasyModel 模型",
+        "description": "STL 3D 模型文件"
+      },
+      {
+        "ext": "obj",
+        "name": "EasyModel 模型",
+        "description": "OBJ 3D 模型文件"
+      },
+      {
+        "ext": "ply",
+        "name": "EasyModel 模型",
+        "description": "PLY 3D 模型文件"
+      },
+      {
+        "ext": "glb",
+        "name": "EasyModel 模型",
+        "description": "GLB 3D 模型文件"
+      },
+      {
+        "ext": "gltf",
+        "name": "EasyModel 模型",
+        "description": "glTF 3D 模型文件"
+      },
+      {
+        "ext": "3mf",
+        "name": "EasyModel 模型",
+        "description": "3MF 3D 打印模型文件"
+      },
+      {
+        "ext": "step",
+        "name": "EasyModel 模型",
+        "description": "STEP 三维模型文件"
+      },
+      {
+        "ext": "stp",
+        "name": "EasyModel 模型",
+        "description": "STEP 三维模型文件"
+      },
+      {
+        "ext": "iges",
+        "name": "EasyModel 模型",
+        "description": "IGES 三维模型文件"
+      },
+      {
+        "ext": "igs",
+        "name": "EasyModel 模型",
+        "description": "IGES 三维模型文件"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "EasyModel-${version}-setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": false,
+      "deleteAppDataOnUninstall": true,
+      "warningsAsErrors": false,
+      "include": "build/installer.nsh"
+    }
+  }
+}

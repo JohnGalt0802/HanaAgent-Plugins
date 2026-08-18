@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EasyModel</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; font-family: "Microsoft YaHei", system-ui, sans-serif; }
+  body { background: linear-gradient(160deg, #0b1220 0%, #16233b 55%, #1c2e4a 100%); }
+
+  #viewer { position: absolute; inset: 0; }
+
+  #toolbar {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    width: max-content; max-width: calc(100vw - 24px);
+    background: rgba(10, 18, 34, 0.55); backdrop-filter: blur(8px);
+    border: 1px solid rgba(160, 200, 255, 0.16); border-radius: 10px;
+    padding: 8px 14px;
+  }
+  #toolbar .title { color: #cfe6ff; font-size: 24px; font-weight: 700; letter-spacing: 1px; }
+  #toolbar .rows { display: flex; flex-direction: column; gap: 6px; }
+  #toolbar .row { display: flex; justify-content: center; gap: 8px; flex-wrap: nowrap; }
+  #toolbar .btn { white-space: nowrap; }
+  .btn {
+    background: rgba(160, 200, 255, 0.08); color: #b8d4f2;
+    border: 1px solid rgba(160, 200, 255, 0.22); border-radius: 6px;
+    padding: 6px 14px; font-size: 14px; cursor: pointer; user-select: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn:hover { background: rgba(160, 200, 255, 0.2); color: #ffffff; }
+  .btn.active { background: rgba(110, 190, 255, 0.3); color: #ffffff; border-color: rgba(110, 190, 255, 0.5); }
+  #page {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    color: rgba(200, 220, 245, 0.85); font-size: 14px; z-index: 10;
+    font-variant-numeric: tabular-nums; letter-spacing: 1px;
+    background: rgba(10, 18, 34, 0.45); border-radius: 8px; padding: 6px 14px;
+    border: 1px solid rgba(160, 200, 255, 0.12);
+  }
+
+  /* 视角下拉菜单 */
+  .dd { position: relative; }
+  .dd-menu {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+    background: rgba(12, 22, 40, 0.92); backdrop-filter: blur(10px);
+    border: 1px solid rgba(160, 200, 255, 0.2); border-radius: 10px;
+    padding: 8px; display: none; min-width: 148px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  }
+  .dd-menu.open { display: block; }
+  .dd-sec { color: rgba(160, 200, 245, 0.55); font-size: 12px; padding: 6px 10px 4px; letter-spacing: 1px; }
+  .dd-item {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; color: #b8d4f2; font-size: 14px;
+    padding: 7px 10px; border-radius: 6px; cursor: pointer;
+  }
+  .dd-item:hover { background: rgba(110, 190, 255, 0.2); color: #ffffff; }
+  .dd-item.cur { color: #9fe0ff; background: rgba(110, 190, 255, 0.12); }
+
+  /* 颜色选择 */
+  .swatches { display: grid; grid-template-columns: repeat(4, 26px); gap: 6px; padding: 4px 10px 6px; }
+  .sw { width: 26px; height: 26px; border-radius: 6px; border: 2px solid rgba(255,255,255,0.25); cursor: pointer; transition: transform 0.1s, border-color 0.1s; }
+  .sw:hover { transform: scale(1.15); border-color: #9fe0ff; }
+  .sw.cur { border-color: #9fe0ff; box-shadow: 0 0 0 2px rgba(159, 224, 255, 0.35); }
+  .wheel-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0 10px 10px; }
+  .wheel-wrap canvas { cursor: pointer; border-radius: 6px; display: block; }
+  .wheel-hint { color: rgba(160, 200, 245, 0.55); font-size: 11px; padding-bottom: 2px; letter-spacing: 1px; }
+
+  /* 空格选视角弹层 */
+  #face-modal {
+    position: absolute; inset: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(5, 10, 20, 0.4);
+  }
+  .face-panel {
+    background: rgba(12, 22, 40, 0.95); backdrop-filter: blur(12px);
+    border: 1px solid rgba(160, 200, 255, 0.25); border-radius: 14px;
+    padding: 18px 22px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+  .face-title { color: #cfe6ff; font-size: 14px; letter-spacing: 1px; margin-bottom: 12px; text-align: center; }
+  .face-grid { display: grid; grid-template-columns: repeat(3, 64px); gap: 10px; }
+  .face-btn {
+    background: rgba(160, 200, 255, 0.1); color: #cfe6ff;
+    border: 1px solid rgba(160, 200, 255, 0.25); border-radius: 8px;
+    padding: 12px 0; font-size: 15px; cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .face-btn:hover { background: rgba(110, 190, 255, 0.3); transform: translateY(-2px); }
+
+  /* 左右翻页箭头 */
+  .nav-btn {
+    position: absolute; top: 50%; transform: translateY(-50%); z-index: 10;
+    width: 46px; height: 68px; display: flex; align-items: center; justify-content: center;
+    background: rgba(10, 18, 34, 0.38); border: 1px solid rgba(160, 200, 255, 0.18);
+    border-radius: 10px; color: #b8d4f2; cursor: pointer; user-select: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .nav-btn:hover { background: rgba(110, 190, 255, 0.28); color: #ffffff; }
+  #btn-prev { left: 12px; }
+  #btn-next { right: 12px; }
+  .nav-btn:disabled, .nav-btn:disabled:hover { opacity: 0.3; cursor: default; }
+
+  /* 预览条（打开文件夹后：横向可滚动、点选的模型缩略图条；置于工具栏下方居中） */
+  #preview-strip {
+    position: absolute; top: 122px; left: 50%; transform: translateX(-50%); z-index: 9;
+    display: flex; gap: 8px; align-items: stretch;
+    max-width: calc(100vw - 24px); min-width: 0; width: max-content;
+    overflow-x: auto; overflow-y: hidden;
+    padding: 8px 10px;
+    background: rgba(10, 18, 34, 0.55); backdrop-filter: blur(8px);
+    border: 1px solid rgba(160, 200, 255, 0.16); border-radius: 10px;
+    scrollbar-width: thin;
+  }
+  #preview-strip[hidden] { display: none; }
+  #preview-strip::-webkit-scrollbar { height: 8px; }
+  #preview-strip::-webkit-scrollbar-track { background: rgba(10, 18, 34, 0.6); border-radius: 4px; }
+  #preview-strip::-webkit-scrollbar-thumb { background: rgba(160, 200, 255, 0.3); border-radius: 4px; }
+  #preview-strip::-webkit-scrollbar-thumb:hover { background: rgba(160, 200, 255, 0.5); }
+  #preview-strip { scrollbar-color: rgba(160, 200, 255, 0.3) rgba(10, 18, 34, 0.6); }
+  .pv-item {
+    flex: 0 0 auto; width: 92px; cursor: pointer; user-select: none;
+    border: 1px solid rgba(160, 200, 255, 0.18); border-radius: 8px; overflow: hidden;
+    background: rgba(160, 200, 255, 0.05);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .pv-item:hover { border-color: rgba(110, 190, 255, 0.5); }
+  .pv-item.active { border-color: #6ebeff; background: rgba(110, 190, 255, 0.15); }
+  .pv-item.failed { opacity: 0.45; }
+  .pv-thumb {
+    width: 100%; height: 62px; background: #0d1626;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .pv-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .pv-thumb .pv-spin { color: rgba(160, 200, 255, 0.4); font-size: 11px; }
+  .pv-name {
+    padding: 4px 6px; font-size: 11px; color: #9fc0e0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
+  }
+
+  #info {
+    position: absolute; right: 16px; bottom: 16px; z-index: 10;
+    color: rgba(200, 220, 245, 0.75); font-size: 14px; line-height: 1.8;
+    text-align: right; pointer-events: none;
+    background: rgba(10, 18, 34, 0.45); border-radius: 8px; padding: 10px 14px;
+    border: 1px solid rgba(160, 200, 255, 0.12);
+    font-variant-numeric: tabular-nums;
+  }
+  #info b { color: #9fd8f0; font-weight: 600; }
+
+  #drop-hint {
+    position: absolute; inset: 0; z-index: 5; display: flex;
+    align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+    color: rgba(190, 215, 245, 0.9); pointer-events: none;
+    text-align: center; padding: 20px;
+  }
+  #drop-hint .big { font-size: 24px; letter-spacing: 3px; }
+  #drop-hint .small { font-size: 15px; color: rgba(170, 200, 235, 0.6); }
+
+  body.light { background: linear-gradient(160deg, #f5efe4 0%, #e9e2d3 100%); }
+  body.light #toolbar { background: rgba(255, 253, 247, 0.7); border-color: rgba(120, 110, 90, 0.25); }
+  body.light #toolbar .title { color: #4a433c; }
+  body.light .btn { color: #5a5148; background: rgba(90, 80, 65, 0.06); border-color: rgba(120, 110, 90, 0.3); }
+  body.light .btn:hover { background: rgba(90, 80, 65, 0.14); color: #2a2622; }
+  body.light .btn.active { background: rgba(83, 125, 150, 0.25); color: #2a2622; border-color: rgba(83, 125, 150, 0.5); }
+  body.light #info { color: rgba(74, 67, 60, 0.75); background: rgba(255, 253, 247, 0.6); border-color: rgba(120, 110, 90, 0.2); }
+  body.light #info b { color: #537d96; }
+  body.light #page { color: rgba(74, 67, 60, 0.7); background: rgba(255, 253, 247, 0.6); border-color: rgba(120, 110, 90, 0.2); }
+  body.light .nav-btn { background: rgba(255, 253, 247, 0.65); border-color: rgba(120, 110, 90, 0.25); color: #5a5148; }
+  body.light .nav-btn:hover { background: rgba(83, 125, 150, 0.2); color: #2a2622; }
+  body.light .nav-btn:disabled, body.light .nav-btn:disabled:hover { opacity: 0.3; }
+  body.light #preview-strip { background: rgba(255, 253, 247, 0.75); border-color: rgba(120, 110, 90, 0.25); }
+  body.light #preview-strip::-webkit-scrollbar-track { background: rgba(120, 110, 90, 0.08); }
+  body.light #preview-strip::-webkit-scrollbar-thumb { background: rgba(120, 110, 90, 0.3); }
+  body.light #preview-strip::-webkit-scrollbar-thumb:hover { background: rgba(120, 110, 90, 0.45); }
+  body.light .pv-item { background: rgba(90, 80, 65, 0.05); border-color: rgba(120, 110, 90, 0.25); }
+  body.light .pv-item:hover { border-color: rgba(83, 125, 150, 0.5); }
+  body.light .pv-item.active { border-color: #537d96; background: rgba(83, 125, 150, 0.15); }
+  body.light .pv-thumb { background: #efe9dc; }
+  body.light .pv-thumb .pv-spin { color: rgba(90, 80, 65, 0.4); }
+  body.light .pv-name { color: #6a6055; }
+  body.light #drop-hint .big { color: #4a433c; }
+  body.light #drop-hint .small { color: rgba(74, 67, 60, 0.55); }
+  body.light .dd-menu { background: rgba(255, 253, 247, 0.96); border-color: rgba(120, 110, 90, 0.3); }
+  body.light .dd-sec { color: rgba(90, 80, 65, 0.6); }
+  body.light .dd-item { color: #5a5148; }
+  body.light .dd-item:hover { background: rgba(90, 80, 65, 0.12); color: #2a2622; }
+  body.light .dd-item.cur { color: #537d96; background: rgba(83, 125, 150, 0.15); }
+  body.light .sw { border-color: rgba(90, 80, 65, 0.4); }
+  body.light .sw.cur { border-color: #537d96; box-shadow: 0 0 0 2px rgba(83, 125, 150, 0.35); }
+  body.light #face-modal { background: rgba(60, 50, 35, 0.25); }
+  body.light .face-panel { background: rgba(255, 253, 247, 0.97); border-color: rgba(120, 110, 90, 0.3); }
+  body.light .face-title { color: #4a433c; }
+  body.light .face-btn { background: rgba(90, 80, 65, 0.08); color: #4a433c; border-color: rgba(120, 110, 90, 0.3); }
+  body.light .face-btn:hover { background: rgba(83, 125, 150, 0.25); color: #2a2622; }
+</style>
+</head>
+<body>
+
+<div id="viewer"></div>
+
+<div id="drop-hint">
+  <div class="big">把模型拖进来，或点「打开」</div>
+  <div class="small">支持 STL / OBJ / PLY / GLB / 3MF / STEP / IGES · ← → 翻页</div>
+</div>
+
+<!-- 左右翻页箭头 -->
+<div class="nav-btn" id="btn-prev" title="上一个 (←)">
+  <svg width="22" height="22" viewBox="0 0 20 20"><polyline points="12,3 5,10 12,17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</div>
+<div class="nav-btn" id="btn-next" title="下一个 (→)">
+  <svg width="22" height="22" viewBox="0 0 20 20"><polyline points="8,3 15,10 8,17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</div>
+
+<div id="toolbar">
+  <span class="title">EasyModel</span>
+  <div class="rows">
+    <div class="row">
+      <button class="btn" id="btn-open">打开</button>
+      <button class="btn" id="btn-folder">打开文件夹</button>
+      <button class="btn" id="btn-wire">线框</button>
+      <button class="btn" id="btn-rotate">自转</button>
+      <button class="btn" id="btn-grid">网格</button>
+      <div class="dd" id="view-dd">
+        <button class="btn" id="btn-fit">视角 ▾</button>
+        <div class="dd-menu" id="view-menu">
+          <div class="dd-sec">视角类型</div>
+          <button class="dd-item" data-act="reset">重置视角</button>
+          <button class="dd-item" data-act="persp">透视</button>
+          <button class="dd-item" data-act="ortho">正交</button>
+          <div class="dd-sec">正视方向</div>
+          <button class="dd-item" data-face="front">前视</button>
+          <button class="dd-item" data-face="back">后视</button>
+          <button class="dd-item" data-face="left">左视</button>
+          <button class="dd-item" data-face="right">右视</button>
+          <button class="dd-item" data-face="top">俯视</button>
+          <button class="dd-item" data-face="bottom">仰视</button>
+        </div>
+      </div>
+      <button class="btn" id="btn-theme">换肤</button>
+      <div class="dd" id="color-dd">
+        <button class="btn" id="btn-color">颜色 ▾</button>
+        <div class="dd-menu" id="color-menu">
+          <div class="dd-sec">模型颜色</div>
+          <div class="swatches">
+            <button class="sw" data-c="0x8fd3d0" style="background:#8fd3d0" title="青灰"></button>
+            <button class="sw" data-c="0x7fa8c8" style="background:#7fa8c8" title="钢蓝"></button>
+            <button class="sw" data-c="0xb8b0a0" style="background:#b8b0a0" title="暖灰"></button>
+            <button class="sw" data-c="0xd08a5a" style="background:#d08a5a" title="橙"></button>
+            <button class="sw" data-c="0x9a8ac8" style="background:#9a8ac8" title="紫"></button>
+            <button class="sw" data-c="0x8ac88a" style="background:#8ac88a" title="绿"></button>
+            <button class="sw" data-c="0xc87878" style="background:#c87878" title="红"></button>
+            <button class="sw" data-c="0xdedede" style="background:#dedede" title="银白"></button>
+          </div>
+          <div class="wheel-hint">色轮 · 单击选色 · 双击确认</div>
+          <div class="wheel-wrap" id="wheel-wrap"></div>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn" id="btn-light">光源跟随</button>
+      <button class="btn" id="btn-light-def">光源复位</button>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept=".stl,.obj,.ply,.glb,.gltf,.3mf,.step,.stp,.iges,.igs" style="display:none">
+</div>
+
+<!-- 预览条（打开文件夹/多文件后：横向滚动缩略图） -->
+<div id="preview-strip" hidden></div>
+
+<span id="page"></span>
+
+<div id="info"></div>
+
+<!-- 空格选视角弹层（SolidWorks 风格） -->
+<div id="face-modal" style="display:none">
+  <div class="face-panel">
+    <div class="face-title">选择视角 · Esc 关闭</div>
+    <div class="face-grid">
+      <button class="face-btn" data-face="front">前</button>
+      <button class="face-btn" data-face="back">后</button>
+      <button class="face-btn" data-face="left">左</button>
+      <button class="face-btn" data-face="right">右</button>
+      <button class="face-btn" data-face="top">上</button>
+      <button class="face-btn" data-face="bottom">下</button>
+    </div>
+  </div>
+</div>
+
+<script>window.__t0 = Date.now();</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
+<!-- 模块预加载：须在 importmap 之后（addons 依赖 'three' 别名），加速首帧 -->
+<link rel="modulepreload" href="./vendor/three.module.js">
+<link rel="modulepreload" href="./vendor/addons/controls/ArcballControls.js">
+<link rel="modulepreload" href="./vendor/addons/loaders/STLLoader.js">
+<link rel="modulepreload" href="./vendor/addons/loaders/OBJLoader.js">
+<link rel="modulepreload" href="./vendor/addons/loaders/PLYLoader.js">
+<link rel="modulepreload" href="./vendor/addons/loaders/GLTFLoader.js">
+<link rel="modulepreload" href="./vendor/addons/loaders/3MFLoader.js">
+
+<script type="module">
+console.log('[EasyModel] page init +' + (Date.now() - window.__t0) + 'ms');
+console.log('[EasyModel] import done +' + (Date.now() - window.__t0) + 'ms');
+import * as THREE from 'three';
+import { ArcballControls } from 'three/addons/controls/ArcballControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+
+const container = document.getElementById('viewer');
+const scene = new THREE.Scene();
+
+const DEFAULT_FOV = 2 * Math.atan(12 / 50) * 180 / Math.PI; // 50mm 等效焦距的垂直视场角 ≈27°
+const camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.1, 5000);
+camera.position.set(8, 6, 10);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+container.appendChild(renderer.domElement);
+console.log('[EasyModel] renderer +' + (Date.now() - window.__t0) + 'ms');
+
+// 预编译常用材质 shader（模型挂载后首帧不再编译卡顿）
+(function precompile() {
+  const probeMat = new THREE.MeshStandardMaterial({ color: 0x8fd3d0, roughness: 0.32, metalness: 0.12 });
+  const probeMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), probeMat);
+  scene.add(probeMesh);
+  const probeLine = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xc0d8ee, transparent: true, opacity: 0.55 }));
+  scene.add(probeLine);
+  renderer.compile(scene, camera);
+  scene.remove(probeMesh);
+  scene.remove(probeLine);
+  probeMat.dispose();
+  probeMesh.geometry.dispose();
+})();
+
+// ArcballControls：球面自由旋转，无万向锁死区（SolidWorks 式）
+const controls = new ArcballControls(camera, renderer.domElement, scene);
+controls.setGizmosVisible(false); // 关掉辅助球，界面干净
+controls.dampingFactor = 25;
+
+// 自动化验证钩子（正式版保留无害）
+let isOrtho = false;
+window.__em = { get isOrtho() { return isOrtho; }, get rotating() { return autoRotate; }, camera, controls, setProjection, setFace };
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x0a1220, 0.9));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(6, 10, 6);
+scene.add(dir);
+
+// ---------- 三维自适应网格（10 的整数幂单位，随模型尺寸自动调整） ----------
+const gridGroup = new THREE.Group();
+const modelGroup = new THREE.Group(); // 模型组：自转时 模型+网格+坐标轴 整体旋转（相对位置固定）
+modelGroup.add(gridGroup); // 网格挂进模型组，跟随零件旋转
+scene.add(modelGroup);
+let gridUnit = 1;
+
+function fmtUnit(mm) {
+  if (mm < 0.01) return '0.01mm'; // 精度下限，不用微米
+  if (mm < 1) return (Math.round(mm * 100) / 100) + 'mm'; // 0.01mm 精度
+  if (mm < 10) return mm + 'mm';
+  if (mm < 1000) return (mm / 10) + 'cm';
+  return (mm / 1000) + 'm';
+}
+
+function makeGrids() {
+  // 清空旧网格
+  while (gridGroup.children.length) {
+    const g = gridGroup.children.pop();
+    g.geometry.dispose();
+    g.material.dispose();
+  }
+  if (!current) return;
+  scene.updateMatrixWorld(true);
+  // 按模型最大尺寸选网格单元：10 的整数幂，保证格数在 8~20 之间
+  const box = new THREE.Box3().setFromObject(current);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  let unit = Math.pow(10, Math.floor(Math.log10(Math.max(maxDim / 10, 1e-4))));
+  while (maxDim / unit > 20) unit *= 10;
+  while (maxDim / unit < 8) unit /= 10;
+  gridUnit = unit;
+
+  // 网格范围：三方向各自向上取整贴合模型尺寸（完整边缘框线，不留半格）
+  const majorStep = unit * 10;
+  const sx = Math.max(unit, Math.ceil(size.x / unit) * unit);
+  const sy = Math.max(unit, Math.ceil(size.y / unit) * unit);
+  const sz = Math.max(unit, Math.ceil(size.z / unit) * unit);
+  // 主题色板：深色=亮线；亮色=粗线加深、细线调浅
+  const light = document.body.classList.contains('light');
+  const PAL = light
+    ? { fine: 0xdcd7ca, fineO: 0.55, major: 0x8f8578, majorO: 0.75 }
+    : { fine: 0x8aa8c4, fineO: 0.4, major: 0xc0d8ee, majorO: 0.55 };
+  // 细线：每 unit 一条（k 从 1 起，0 坐标轴留给粗线层）
+  const fineVerts = [];
+  const L = (a, b) => { fineVerts.push(a[0], a[1], a[2], b[0], b[1], b[2]); };
+  const nX = Math.round(sx / unit), nY = Math.round(sy / unit), nZ = Math.round(sz / unit);
+  for (let k = 1; k < nX; k++) { L([k * unit, 0, 0], [k * unit, 0, sz]); L([k * unit, 0, 0], [k * unit, sy, 0]); }
+  for (let k = 1; k < nY; k++) { L([0, k * unit, 0], [0, k * unit, sz]); L([0, k * unit, 0], [sx, k * unit, 0]); }
+  for (let k = 1; k < nZ; k++) { L([0, 0, k * unit], [sx, 0, k * unit]); L([0, 0, k * unit], [0, sy, k * unit]); }
+  const fineGeo = new THREE.BufferGeometry();
+  fineGeo.setAttribute('position', new THREE.Float32BufferAttribute(fineVerts, 3));
+  const fineMat = new THREE.LineBasicMaterial({ color: PAL.fine, transparent: true, opacity: PAL.fineO });
+  gridGroup.add(new THREE.LineSegments(fineGeo, fineMat));
+
+  // 粗线（majorStep 处，三方向各自）
+  const majorVerts = [];
+  const M = (a, b) => { majorVerts.push(a[0], a[1], a[2], b[0], b[1], b[2]); };
+  for (let k = majorStep; k < sx; k += majorStep) { M([k, 0, 0], [k, 0, sz]); M([k, 0, 0], [k, sy, 0]); }
+  for (let k = majorStep; k < sy; k += majorStep) { M([0, k, 0], [0, k, sz]); M([0, k, 0], [sx, k, 0]); }
+  for (let k = majorStep; k < sz; k += majorStep) { M([0, 0, k], [sx, 0, k]); M([0, 0, k], [0, sy, k]); }
+  const majorGeo = new THREE.BufferGeometry();
+  majorGeo.setAttribute('position', new THREE.Float32BufferAttribute(majorVerts, 3));
+  const majorMat = new THREE.LineBasicMaterial({ color: PAL.major, transparent: true, opacity: PAL.majorO });
+  gridGroup.add(new THREE.LineSegments(majorGeo, majorMat));
+
+  // 坐标轴：放进 modelGroup，随模型自转（与零件相对位置固定）；RGB 三色（X红 Y绿 Z蓝）
+  if (axesLines) {
+    axesLines.forEach((l) => { modelGroup.remove(l); l.geometry.dispose(); l.material.dispose(); });
+    axesLines = null;
+  }
+  const ox = -modelGroup.position.x, oy = -modelGroup.position.y, oz = -modelGroup.position.z; // 模型角在组内的局部坐标
+  const mkAxis = (a, b, color) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([a[0], a[1], a[2], b[0], b[1], b[2]], 3));
+    const m = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
+    const l = new THREE.Line(g, m);
+    modelGroup.add(l);
+    return l;
+  };
+  axesLines = [
+    mkAxis([ox, oy, oz], [ox + sx, oy, oz], 0xff5a5a), // X 轴（红）
+    mkAxis([ox, oy, oz], [ox, oy + sy, oz], 0x5aff8a), // Y 轴（绿）
+    mkAxis([ox, oy, oz], [ox, oy, oz + sz], 0x5ab2ff), // Z 轴（蓝）
+  ];
+  // 网格整体随模型旋转：gridGroup 定位到模型角（modelGroup 局部坐标）
+  gridGroup.position.set(ox, oy, oz);
+}
+
+let current = null;     // 当前显示的对象
+let isWire = false;
+let modelBox = null;    // 旋转中心约束盒（模型 bbox，世界坐标）
+let axesLines = null;   // 模型坐标轴（随自转，在 modelGroup 内）
+let autoRotate = false;
+const modelList = [];   // { type:'path'|'file', name, path, ext, file }
+let modelIndex = -1;
+let currentFilePath = null; // 当前文件绝对路径（用于设为默认打开方式）
+let isFirstMount = true;   // 首个模型加载时恢复上次视角存档
+let lastViewSave = 0;      // 视角节流保存时间戳
+
+// ---------- 替换当前对象（旧对象几何体/材质释放，防内存泄漏） ----------
+function replaceObject(obj) {
+  if (current) {
+    modelGroup.remove(current);
+    current.traverse((c) => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) {
+        const mats = Array.isArray(c.material) ? c.material : [c.material];
+        mats.forEach((m) => m.dispose());
+      }
+    });
+  }
+  current = obj;
+  modelGroup.rotation.set(0, 0, 0); // 换模型时重置自转角度
+  modelGroup.add(current);
+}
+
+// ---------- 挂载 + 信息 + 视角 ----------
+function mount(name, unit) {
+  console.log('[EasyModel] mounted:', name);
+  autoRotate = false; // 切换模型后默认不旋转
+  document.getElementById('btn-rotate').classList.remove('active');
+  scene.updateMatrixWorld(true); // 强制刷新全部矩阵，确保 bbox 使用最新变换
+  // 模型对齐第一象限：包围盒最小角移到原点（只平移，不改变模型本身）
+  const box0 = new THREE.Box3().setFromObject(current);
+  current.position.x -= box0.min.x;
+  current.position.y -= box0.min.y;
+  current.position.z -= box0.min.z;
+  // 自转绕模型中心：模型组位置=中心，模型局部坐标回退，世界位置不变
+  const c0 = new THREE.Vector3();
+  box0.getSize(c0);
+  modelGroup.position.set(c0.x / 2, c0.y / 2, c0.z / 2);
+  current.position.x -= c0.x / 2;
+  current.position.y -= c0.y / 2;
+  current.position.z -= c0.z / 2;
+  // 防御：对齐后二次校验 bbox 最小角是否归零，异常则再补偿一次（兼容带内部变换的模型）
+  scene.updateMatrixWorld(true);
+  const chk = new THREE.Box3().setFromObject(current);
+  if (Math.abs(chk.min.x) > 1e-6 || Math.abs(chk.min.y) > 1e-6 || Math.abs(chk.min.z) > 1e-6) {
+    current.position.x -= chk.min.x;
+    current.position.y -= chk.min.y;
+    current.position.z -= chk.min.z;
+    scene.updateMatrixWorld(true);
+  }
+  makeGrids();
+  applySavedColor();
+  scene.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(current);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  modelBox = box.clone(); // 旋转中心约束盒（每次加载/换模型时更新）
+  console.log('[EasyModel] bbox min: ' + box.min.x.toFixed(2) + ', ' + box.min.y.toFixed(2) + ', ' + box.min.z.toFixed(2) + ' | max: ' + box.max.x.toFixed(2) + ', ' + box.max.y.toFixed(2) + ', ' + box.max.z.toFixed(2));
+
+  let faces = 0;
+  current.traverse((c) => {
+    if (c.geometry) {
+      faces += c.geometry.index ? c.geometry.index.count / 3 : c.geometry.attributes.position.count / 3;
+    }
+  });
+
+  document.getElementById('info').innerHTML =
+    '<b>' + name + '</b><br>' +
+    '三角面 ' + Math.round(faces).toLocaleString() + '<br>' +
+    '尺寸 ' + size.x.toFixed(1) + ' × ' + size.y.toFixed(1) + ' × ' + size.z.toFixed(1) + '（' + unit + '）<br>' +
+    '网格 ' + fmtUnit(gridUnit) + '/格';
+  document.title = name + ' — EasyModel';
+  document.getElementById('drop-hint').style.display = 'none';
+  updateNavState();
+  if (isFirstMount) {
+    isFirstMount = false;
+    fitView(); // 打开模型始终默认等轴侧视角
+    restoreView(); // 之后只恢复投影类型（透视/正交）
+  } else {
+    fitView();
+  }
+}
+
+function makeMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x8fd3d0, roughness: 0.32, metalness: 0.12, wireframe: isWire,
+  });
+}
+
+// ---------- 视角：透视/正交 + 六面正视 ----------
+const FACES = {
+  front:  { d: [0, 0, 1], up: [0, 1, 0] },
+  back:   { d: [0, 0, -1], up: [0, 1, 0] },
+  left:   { d: [-1, 0, 0], up: [0, 1, 0] },
+  right:  { d: [1, 0, 0], up: [0, 1, 0] },
+  top:    { d: [0, 1, 0], up: [0, 0, -1] },
+  bottom: { d: [0, -1, 0], up: [0, 0, 1] },
+};
+
+function updateProjection() {
+  if (!current) return;
+  if (isOrtho) {
+    const box = new THREE.Box3().setFromObject(current);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const radius = Math.max(size.x, size.y, size.z) / 2 || 1;
+    const halfY = radius * 1.6;
+    const halfX = halfY * camera.aspect; // 按窗口宽高比适配，防横向变形
+    camera.projectionMatrix.makeOrthographic(-halfX, halfX, halfY, -halfY, 0.01, 100000);
+  } else {
+    camera.updateProjectionMatrix();
+  }
+}
+
+function setProjection(type) {
+  if (type === 'reset') {
+    resetView(); // 只重置相机位置，保持当前投影（透视/正交）与焦距
+    return;
+  }
+  isOrtho = (type === 'ortho');
+  document.querySelectorAll('#view-menu .dd-item[data-act]').forEach((b) => b.classList.toggle('cur', b.dataset.act === type));
+  updateProjection(); // 只切投影矩阵，保持当前视角
+  saveView();
+}
+
+// 重置视角：只把相机位置/朝向重置到第一象限正等轴侧，不动投影类型和焦距
+function resetView() {
+  if (!current) return;
+  const box = new THREE.Box3().setFromObject(current);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const radius = Math.max(size.x, size.y, size.z) / 2 || 1;
+  const dist = radius / Math.tan((camera.fov * Math.PI) / 360) * 1.3;
+  const d = 1 / Math.sqrt(3);
+  camera.position.set(center.x + dist * d, center.y + dist * d, center.z + dist * d);
+  camera.up.set(0, 1, 0);
+  controls.target.copy(center);
+  controls.update();
+  updateProjection(); // 按当前 isOrtho 重建投影矩阵（正交则保持正交）
+  saveView();
+}
+
+// ---------- 视角状态自动保存（跟皮肤一样记忆，只存投影类型） ----------
+function saveView() {
+  try {
+    localStorage.setItem('easymodel-view', JSON.stringify({ ortho: isOrtho }));
+  } catch { /* ignore */ }
+}
+// 只恢复投影类型（透视/正交），不恢复位置——打开模型始终是默认等轴侧视角
+function restoreView() {
+  try {
+    const s = JSON.parse(localStorage.getItem('easymodel-view') || 'null');
+    if (!s) return;
+    isOrtho = !!s.ortho;
+    document.querySelectorAll('#view-menu .dd-item[data-act]').forEach((b) => b.classList.toggle('cur', b.dataset.act === (isOrtho ? 'ortho' : 'persp')));
+    updateProjection();
+  } catch { /* ignore */ }
+}
+
+function setFace(face) {
+  if (!current) return;
+  const f = FACES[face];
+  if (!f) return;
+  const box = new THREE.Box3().setFromObject(current);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const radius = Math.max(size.x, size.y, size.z) / 2 || 1;
+  // 观察距离按当前 fov 计算（模型完整入画），1.3 倍余量
+  const dist = radius / Math.tan((camera.fov * Math.PI) / 360) * 1.3;
+  camera.position.set(center.x + f.d[0] * dist, center.y + f.d[1] * dist, center.z + f.d[2] * dist);
+  camera.up.set(f.up[0], f.up[1], f.up[2]);
+  controls.target.copy(center);
+  controls.update();
+  updateProjection();
+}
+
+function fitView() {
+  if (!current) return;
+  const box = new THREE.Box3().setFromObject(current);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const radius = Math.max(size.x, size.y, size.z) / 2 || 1;
+  // 重置视角：恢复 50mm 等效焦距（默认透视），观察距离按 fov 计算保证完整入画
+  camera.fov = DEFAULT_FOV;
+  const dist = radius / Math.tan((camera.fov * Math.PI) / 360) * 1.3;
+  // 第一象限正等轴侧：视线方向 (1,1,1) 归一化
+  const d = 1 / Math.sqrt(3);
+  camera.position.set(center.x + dist * d, center.y + dist * d, center.z + dist * d);
+  camera.up.set(0, 1, 0);
+  camera.near = Math.max(dist / 200, 1e-4);
+  camera.far = dist * 200;
+  camera.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+  updateProjection();
+}
+
+// ---------- 无单位格式（STL/OBJ/PLY）：保持真实数值，只做法线计算 ----------
+function mountGeometry(object, name, unit) {
+  // STL/PLY 是 BufferGeometry，包成 Mesh；OBJ 可能是 Group（多材质）
+  let root = object;
+  if (object.isBufferGeometry) root = new THREE.Mesh(object, makeMaterial());
+  const items = root.isGroup ? root.children : [root];
+  items.forEach((c) => { if (c.geometry) c.geometry.computeVertexNormals(); });
+  replaceObject(root);
+  mount(name, unit);
+}
+
+// ---------- 有单位格式（GLB/3MF/STEP/IGES）：保持原尺寸，只调相机 ----------
+function mountModel(object, name, unit) {
+  replaceObject(object);
+  mount(name, unit);
+}
+
+// ---------- 按路径加载（桌面模式：走 stlview:// 虚拟协议，无 CORS） ----------
+function loadByPath(filePath) {
+  if (window.stlAPI) {
+    window.stlAPI.listModels(filePath).then((r) => {
+      if (!r.files.length) return;
+      // 工作集已建立（文件夹/多文件模式）则不再重建，避免覆盖当前 index
+      if (modelList.some((m) => m.path === filePath) && modelIndex >= 0) return;
+      const items = r.files.map((f) => {
+        const n = f.split(/[\\/]/).pop();
+        return { type: 'path', name: n, path: f, ext: (n.split('.').pop() || '').toLowerCase() };
+      });
+      addModels(items, 'replace');
+      modelIndex = r.index;
+      buildPreviewStrip();
+      updateNavState();
+      updatePageLabel();
+    });
+  }
+  const name = filePath.split(/[\\/]/).pop();
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  currentFilePath = filePath;
+  console.log('[EasyModel] loadByPath:', filePath);
+  const url = 'stlview://file?p=' + encodeURIComponent(filePath);
+  const onError = (err) => {
+    console.error('[EasyModel] 加载失败:', err);
+    document.getElementById('info').innerHTML =
+      '<b>加载失败</b><br>' + ((err && err.message) ? err.message : err);
+  };
+
+  if (ext === 'stl') {
+    new STLLoader().load(url, (g) => mountGeometry(g, name, '假定 mm'), undefined, onError);
+  } else if (ext === 'obj') {
+    new OBJLoader().load(url, (o) => mountGeometry(o, name, '假定 mm'), undefined, onError);
+  } else if (ext === 'ply') {
+    new PLYLoader().load(url, (g) => mountGeometry(g, name, '假定 mm'), undefined, onError);
+  } else if (ext === 'glb' || ext === 'gltf') {
+    new GLTFLoader().load(url, (gltf) => mountModel(gltf.scene, name, 'mm'), undefined, onError);
+  } else if (ext === '3mf') {
+    new ThreeMFLoader().load(url, (o) => mountModel(o, name, 'mm'), undefined, onError);
+  } else if (ext === 'step' || ext === 'stp' || ext === 'iges' || ext === 'igs') {
+    if (!window.stlAPI) { onError(new Error('CAD 格式需要在桌面版中打开')); return; }
+    window.stlAPI.parseCad(filePath).then((res) => {
+      if (!res.success) { onError(new Error(res.error || '解析失败')); return; }
+      mountModel(cadToGroup(res.result), name, 'mm');
+    });
+  } else {
+    onError(new Error('不支持的格式: ' + ext));
+  }
+}
+
+// ---------- STEP/IGES 解析结果 → three.js Group ----------
+function cadToGroup(cad) {
+  const group = new THREE.Group();
+  (cad.meshes || []).forEach((m) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(m.attributes.position.array, 3));
+    if (m.attributes.normal) {
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(m.attributes.normal.array, 3));
+    } else {
+      geo.computeVertexNormals();
+    }
+    if (m.index) geo.setIndex(m.index.array);
+    const c = m.color || [0.56, 0.83, 0.82];
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(c[0], c[1], c[2]),
+      roughness: 0.4, metalness: 0.15,
+    });
+    group.add(new THREE.Mesh(geo, mat));
+  });
+  return group;
+}
+
+// ---------- 拖拽/选择（本地 File 对象） ----------
+const SUPPORTED = ['stl', 'obj', 'ply', 'glb', 'gltf', '3mf', 'step', 'stp', 'iges', 'igs'];
+function loadFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (!SUPPORTED.includes(ext)) { alert('不支持的格式：' + ext); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      if (ext === 'step' || ext === 'stp' || ext === 'iges' || ext === 'igs') {
+        if (!window.stlAPI) { alert('CAD 格式需要在桌面版中打开'); return; }
+        window.stlAPI.parseCadBuffer({ name: file.name, buffer: e.target.result }).then((res) => {
+          if (res.success) mountModel(cadToGroup(res.result), file.name, 'mm');
+          else alert('解析失败：' + (res.error || '未知错误'));
+        });
+        return;
+      }
+      if (ext === 'stl') mountGeometry(new STLLoader().parse(e.target.result), file.name, '假定 mm');
+      else if (ext === 'obj') mountGeometry(new OBJLoader().parse(e.target.result), file.name, '假定 mm');
+      else if (ext === 'ply') mountGeometry(new PLYLoader().parse(e.target.result), file.name, '假定 mm');
+      else if (ext === 'glb' || ext === 'gltf') mountModel(new GLTFLoader().parse(e.target.result, '').scene, file.name, 'mm');
+      else if (ext === '3mf') mountModel(new ThreeMFLoader().parse(e.target.result), file.name, 'mm');
+    } catch (err) {
+      alert('解析失败：' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ---------- 多文件工作集 ----------
+function addModels(items, mode = 'replace') {
+  if (mode === 'replace') modelList.length = 0;
+  let added = 0;
+  for (const it of items) {
+    if (!it) continue;
+    const path = it.path;
+    if (path && modelList.some(m => m.path === path)) continue;
+    modelList.push({
+      type: it.type === 'file' ? 'file' : 'path',
+      name: it.name || path.split(/[\\/]/).pop() || (it.file && it.file.name) || '',
+      path: path || '',
+      ext: (it.ext || (path || '').split('.').pop() || (it.file && it.file.name.split('.').pop()) || '').toLowerCase(),
+      file: it.file || null,
+    });
+    added++;
+  }
+  return added;
+}
+
+async function showModel(index) {
+  if (index < 0 || index >= modelList.length) return;
+  modelIndex = index;
+  updatePreviewActive();
+  updateNavState();
+  const m = modelList[index];
+  if (m.type === 'file') {
+    loadFile(m.file);
+  } else {
+    loadByPath(m.path);
+  }
+  // 更新页码显示
+  document.getElementById('page').textContent = modelList.length > 1 ? (index + 1) + ' / ' + modelList.length : '';
+}
+
+function updateNavState() {
+  const prev = document.getElementById('btn-prev');
+  const next = document.getElementById('btn-next');
+  if (prev) prev.disabled = modelIndex <= 0;
+  if (next) next.disabled = modelIndex < 0 || modelIndex >= modelList.length - 1;
+}
+
+function updatePageLabel() {
+  document.getElementById('page').textContent = modelList.length > 1 && modelIndex >= 0 ? (modelIndex + 1) + ' / ' + modelList.length : '';
+}
+
+// ---------- 预览条（文件夹场景：横向可滚动缩略图） ----------
+const strip = document.getElementById('preview-strip');
+const previewCells = new Map();   // path -> cell DOM
+let thumbQueue = [];
+let thumbBusy = false;
+let thumbScene = null, thumbCamera = null;
+let isThumbRendering = false;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function ensureThumbRenderer() {
+  if (thumbScene) return;
+  thumbScene = new THREE.Scene();
+  thumbScene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.15);
+  dl.position.set(3, 4, 5);
+  thumbScene.add(dl);
+  thumbCamera = new THREE.PerspectiveCamera(42, 160 / 120, 0.1, 1e7);
+}
+
+async function renderThumb(m) {
+  ensureThumbRenderer();
+  // 清掉上一轮模型对象（保留灯光）
+  for (let i = thumbScene.children.length - 1; i >= 0; i--) {
+    const o = thumbScene.children[i];
+    if (o.isLight) continue;
+    thumbScene.remove(o);
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach((mm) => mm.dispose());
+    }
+  }
+  // 加载模型
+  const url = 'stlview://file?p=' + encodeURIComponent(m.path);
+  const obj = await new Promise((resolve, reject) => {
+    const ext = m.ext;
+    if (ext === 'stl') new STLLoader().load(url, (g) => {
+      resolve(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.32, metalness: 0.12 })));
+    }, undefined, reject);
+    else if (ext === 'obj') new OBJLoader().load(url, (o) => {
+      o.traverse((c) => { if (c.material) c.material.color.setHex(0x9aa0a8); });
+      resolve(o);
+    }, undefined, reject);
+    else if (ext === 'ply') new PLYLoader().load(url, (g) => {
+      resolve(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.32, metalness: 0.12 })));
+    }, undefined, reject);
+    else if (ext === 'glb' || ext === 'gltf') new GLTFLoader().load(url, (gltf) => {
+      gltf.scene.traverse((c) => { if (c.material) c.material.color.setHex(0x9aa0a8); });
+      resolve(gltf.scene);
+    }, undefined, reject);
+    else if (ext === '3mf') new ThreeMFLoader().load(url, (o) => {
+      o.traverse((c) => { if (c.material) c.material.color.setHex(0x9aa0a8); });
+      resolve(o);
+    }, undefined, reject);
+    else if ((ext === 'step' || ext === 'stp' || ext === 'iges' || ext === 'igs') && window.stlAPI) {
+      window.stlAPI.parseCad(m.path).then((res) => {
+        if (res.success) resolve(cadToGroup(res.result));
+        else reject(new Error(res.error || 'CAD 解析失败'));
+      }).catch(reject);
+    }
+    else reject(new Error('不支持: ' + ext));
+  }).catch(() => null);
+  if (!obj) return null;
+  thumbScene.add(obj);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = new THREE.Vector3(); box.getSize(size);
+  const center = new THREE.Vector3(); box.getCenter(center);
+  const radius = Math.max(size.x, size.y, size.z) / 2 || 1;
+  const dist = radius / Math.tan((42 * Math.PI) / 360) * 1.45;
+  thumbCamera.position.set(center.x + dist * 0.8, center.y + dist * 0.7, center.z + dist);
+  thumbCamera.up.set(0, 1, 0);
+  thumbCamera.near = Math.max(dist / 200, 1e-4);
+  thumbCamera.far = dist * 200;
+  thumbCamera.lookAt(center);
+  thumbCamera.updateProjectionMatrix();
+  // 用主渲染器临时渲染缩略图（preserveDrawingBuffer 已开启，toDataURL 可用）
+  const savedW = container.clientWidth, savedH = container.clientHeight;
+  isThumbRendering = true;
+  renderer.setSize(160, 120, false);
+  renderer.render(thumbScene, thumbCamera);
+  const dataUrl = renderer.domElement.toDataURL('image/png');
+  renderer.setSize(savedW, savedH, true);
+  isThumbRendering = false;
+  return dataUrl;
+}
+
+function queueThumb(m) {
+  thumbQueue.push(m);
+  pumpThumbQueue();
+}
+
+async function pumpThumbQueue() {
+  if (thumbBusy) return;
+  thumbBusy = true;
+  while (thumbQueue.length) {
+    const m = thumbQueue.shift();
+    const cell = previewCells.get(m.path);
+    if (!cell) continue;
+    try {
+      const url = await renderThumb(m);
+      const img = cell.querySelector('img');
+      const spin = cell.querySelector('.pv-spin');
+      if (img) { img.src = url; img.style.display = 'block'; }
+      if (spin) spin.style.display = 'none';
+    } catch (_e) {
+      cell.classList.add('failed');
+      const spin = cell.querySelector('.pv-spin');
+      if (spin) spin.textContent = '×';
+    }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // 两帧间隔，让 UI 喘气
+  }
+  thumbBusy = false;
+}
+
+function buildPreviewStrip() {
+  strip.innerHTML = '';
+  previewCells.clear();
+  if (modelList.length < 2) {
+    strip.hidden = true;
+    return;
+  }
+  modelList.forEach((m, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'pv-item' + (i === modelIndex ? ' active' : '');
+    cell.dataset.index = String(i);
+    if (m.type === 'file') {
+      cell.innerHTML = '<div class="pv-thumb"><span class="pv-spin">' + esc(m.ext || '?') + '</span></div><div class="pv-name" title="' + esc(m.name) + '">' + esc(m.name) + '</div>';
+    } else {
+      cell.innerHTML = '<div class="pv-thumb"><span class="pv-spin">…</span><img style="display:none" alt=""></div><div class="pv-name" title="' + esc(m.name) + '">' + esc(m.name) + '</div>';
+    }
+    cell.onclick = () => showModel(i);
+    strip.appendChild(cell);
+    if (m.path) previewCells.set(m.path, cell);
+  });
+  strip.hidden = false;
+  // 后台生成缩略图（只对 path 条目）
+  modelList.forEach((m) => { if (m.type === 'path') queueThumb(m); });
+}
+
+function updatePreviewActive() {
+  if (!strip || strip.hidden) return;
+  strip.querySelectorAll('.pv-item').forEach((el, i) => el.classList.toggle('active', i === modelIndex));
+}
+
+// 预览条滚轮横向滑动
+strip.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  strip.scrollLeft += e.deltaY;
+}, { passive: false });
+
+// ---------- 按钮 ----------
+document.getElementById('btn-open').onclick = () => document.getElementById('file-input').click();
+document.getElementById('btn-folder').onclick = async () => {
+  try {
+    if (!window.stlAPI) return;
+    const result = await window.stlAPI.scanFolder();
+    if (result.canceled || !result.files.length) return;
+    addModels(result.files.map((f) => ({ type: 'path', name: f.name, path: f.path, ext: f.ext })), 'replace');
+    buildPreviewStrip();
+    await showModel(0);
+  } catch (err) {
+    console.error('[EasyModel] btn-folder error:', err);
+  }
+};
+document.getElementById('file-input').onchange = (e) => {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  const items = files.map((f) => ({ type: 'file', name: f.name, ext: (f.name.split('.').pop() || '').toLowerCase(), file: f }));
+  addModels(items, 'replace');
+  buildPreviewStrip();
+  showModel(0);
+  e.target.value = '';
+};
+document.getElementById('btn-wire').onclick = (e) => {
+  isWire = !isWire;
+  if (current) current.traverse((c) => { if (c.isMesh) c.material.wireframe = isWire; });
+  e.target.classList.toggle('active', isWire);
+};
+document.getElementById('btn-rotate').onclick = (e) => {
+  autoRotate = !autoRotate;
+  e.target.classList.toggle('active', autoRotate);
+};
+document.getElementById('btn-grid').onclick = (e) => {
+  gridGroup.visible = !gridGroup.visible;
+  e.target.classList.toggle('active', !gridGroup.visible);
+};
+document.getElementById('btn-fit').onclick = (e) => {
+  e.stopPropagation();
+  document.getElementById('view-menu').classList.toggle('open');
+};
+document.querySelectorAll('#view-menu .dd-item').forEach((b) => {
+  b.onclick = (e) => {
+    e.stopPropagation();
+    if (b.dataset.act) setProjection(b.dataset.act);
+    if (b.dataset.face) setFace(b.dataset.face);
+    document.getElementById('view-menu').classList.remove('open');
+  };
+});
+document.addEventListener('click', () => document.getElementById('view-menu').classList.remove('open'));
+document.getElementById('btn-theme').onclick = () => {
+  const light = document.body.classList.toggle('light');
+  try { localStorage.setItem('easymodel-theme', light ? 'light' : 'dark'); } catch { /* ignore */ }
+  if (current) makeGrids(); // 重建网格匹配主题色（亮色模式粗线加深、细线调浅）
+};
+
+// ---------- 光源：跟随相机 / 恢复默认 ----------
+// 复杂零件默认摆放可能光照不到细节，把平行光挪到相机位置，光就从当前视角方向打过来
+document.getElementById('btn-light').onclick = (e) => {
+  dir.position.copy(camera.position);
+  dir.target.position.copy(controls.target);
+  dir.target.updateMatrixWorld();
+  e.target.classList.add('active');
+  document.getElementById('btn-light-def').classList.remove('active');
+};
+document.getElementById('btn-light-def').onclick = (e) => {
+  dir.position.set(6, 10, 6);
+  dir.target.position.set(0, 0, 0);
+  dir.target.updateMatrixWorld();
+  e.target.classList.add('active');
+  document.getElementById('btn-light').classList.remove('active');
+};
+
+// ---------- 颜色选项（模型颜色选择 + 存档记忆） ----------
+document.getElementById('btn-color').onclick = (e) => {
+  e.stopPropagation();
+  document.getElementById('color-menu').classList.toggle('open');
+};
+document.querySelectorAll('#color-menu .sw').forEach((sw) => {
+  sw.onclick = (e) => {
+    e.stopPropagation();
+    const c = new THREE.Color(parseInt(sw.dataset.c));
+    if (current) current.traverse((o) => { if (o.isMesh && o.material && o.material.color) { o.material.color.copy(c); if (o.material.map) { o.material.map = null; o.material.needsUpdate = true; } } });
+    document.querySelectorAll('#color-menu .sw').forEach((s) => s.classList.toggle('cur', s === sw));
+    document.getElementById('color-menu').classList.remove('open');
+    try { localStorage.setItem('easymodel-color', sw.dataset.c); } catch { /* ignore */ }
+  };
+});
+document.addEventListener('click', () => document.getElementById('color-menu').classList.remove('open'));
+function applySavedColor() {
+  try {
+    const saved = localStorage.getItem('easymodel-color');
+    if (!saved || !current) return;
+    const c = new THREE.Color(parseInt(saved));
+    current.traverse((o) => { if (o.isMesh && o.material && o.material.color) o.material.color.copy(c); });
+    document.querySelectorAll('#color-menu .sw').forEach((s) => s.classList.toggle('cur', s.dataset.c === saved));
+  } catch (e) { /* ignore */ }
+}
+
+// ---------- 色轮：单击选色预览，双击确认并关闭 ----------
+function hsvToRgb(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+function initColorWheel() {
+  const wrap = document.getElementById('wheel-wrap');
+  if (!wrap) return;
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const cx = S / 2, cy = S / 2, R = S / 2 - 2;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = x - cx, dy = y - cy;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const i = (y * S + x) * 4;
+      if (r > R) { img.data[i + 3] = 0; continue; }
+      const hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      const sat = Math.min(r / R, 1);
+      const [Rc, Gc, Bc] = hsvToRgb(hue, sat, 1);
+      img.data[i] = Rc; img.data[i + 1] = Gc; img.data[i + 2] = Bc; img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  // 亮度条（白→黑，v 渐变）
+  const bar = document.createElement('canvas');
+  bar.width = S; bar.height = 14;
+  const bctx = bar.getContext('2d');
+  const grd = bctx.createLinearGradient(0, 0, S, 0);
+  grd.addColorStop(0, '#ffffff'); grd.addColorStop(0.5, '#808080'); grd.addColorStop(1, '#000000');
+  bctx.fillStyle = grd; bctx.fillRect(0, 0, S, 14);
+  wrap.append(cv, bar);
+  const pick = (e, target, confirm) => {
+    const rect = target.getBoundingClientRect();
+    let x = e.clientX - rect.left, y = e.clientY - rect.top;
+    let hex = null;
+    if (target === cv) {
+      const dx = x - cx, dy = y - cy;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      if (r > R) return;
+      const hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      const sat = Math.min(r / R, 1);
+      const [Rc, Gc, Bc] = hsvToRgb(hue, sat, 1);
+      hex = ((Rc << 16) | (Gc << 8) | Bc).toString(16).padStart(6, '0');
+    } else {
+      const v = 1 - Math.max(0, Math.min(1, x / S));
+      const [Rc, Gc, Bc] = hsvToRgb(0, 0, v);
+      hex = ((Rc << 16) | (Gc << 8) | Bc).toString(16).padStart(6, '0');
+    }
+    if (!hex) return;
+    const c = new THREE.Color(parseInt('0x' + hex));
+    if (current) current.traverse((o) => { if (o.isMesh && o.material && o.material.color) o.material.color.copy(c); });
+    document.querySelectorAll('#color-menu .sw').forEach((s) => s.classList.remove('cur'));
+    if (confirm) {
+      try { localStorage.setItem('easymodel-color', '0x' + hex); } catch (err) { /* ignore */ }
+      document.getElementById('color-menu').classList.remove('open');
+    }
+  };
+  cv.addEventListener('click', (e) => { e.stopPropagation(); pick(e, cv, false); });
+  cv.addEventListener('dblclick', (e) => { e.stopPropagation(); pick(e, cv, true); });
+  bar.addEventListener('click', (e) => { e.stopPropagation(); pick(e, bar, false); });
+  bar.addEventListener('dblclick', (e) => { e.stopPropagation(); pick(e, bar, true); });
+}
+initColorWheel();
+
+// ---------- SolidWorks 式小坐标轴（独立渲染器，左下角，点击正视） ----------
+const gizmoScene = new THREE.Scene();
+const gizmoCam = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+const _axisDir = new THREE.Vector3(0, 1, 0);
+function makeAxis(dir, color) {
+  const group = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.72, 12), new THREE.MeshBasicMaterial({ color }));
+  shaft.position.y = 0.36; // 杆从原点出发：0 ~ 0.72
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.28, 16), new THREE.MeshBasicMaterial({ color }));
+  cone.position.y = 0.72 + 0.14; // 锥头 0.72 ~ 1.0
+  group.add(shaft, cone);
+  group.quaternion.setFromUnitVectors(_axisDir, dir);
+  return group;
+}
+const gxArrow = makeAxis(new THREE.Vector3(1, 0, 0), 0xff5a5a);
+const gyArrow = makeAxis(new THREE.Vector3(0, 1, 0), 0x5aff8a);
+const gzArrow = makeAxis(new THREE.Vector3(0, 0, 1), 0x5ab2ff);
+gizmoScene.add(gxArrow, gyArrow, gzArrow);
+const gRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+gRenderer.setSize(84, 84);
+gRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+gRenderer.domElement.style.cssText = "position:absolute;left:10px;bottom:10px;z-index:20;cursor:pointer";
+container.appendChild(gRenderer.domElement);
+const _gDir = new THREE.Vector3();
+function updateGizmo() {
+  try {
+    _gDir.set(0, 0, 1).applyQuaternion(camera.quaternion);
+    gizmoCam.position.copy(_gDir).multiplyScalar(4.0);
+    gizmoCam.up.copy(camera.up);
+    if (Math.abs(gizmoCam.up.dot(_gDir)) > 0.99) gizmoCam.up.set(0, 1, 0);
+    gizmoCam.lookAt(0, 0, 0);
+    gizmoScene.quaternion.copy(modelGroup.quaternion);
+    gRenderer.render(gizmoScene, gizmoCam);
+  } catch (e) { /* 小坐标轴异常不影响主渲染 */ }
+}
+gRenderer.domElement.addEventListener("pointerdown", (e) => {
+  const rect = gRenderer.domElement.getBoundingClientRect();
+  const px = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  const py = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+  const rc = new THREE.Raycaster();
+  rc.setFromCamera(new THREE.Vector2(px, py), gizmoCam);
+  const hits = rc.intersectObjects([gxArrow, gyArrow, gzArrow], true);
+  if (hits.length) {
+    let arrow = hits[0].object;
+    while (arrow && arrow !== gxArrow && arrow !== gyArrow && arrow !== gzArrow) arrow = arrow.parent;
+    if (arrow === gxArrow) setFace("right");
+    else if (arrow === gyArrow) setFace("top");
+    else if (arrow === gzArrow) setFace("front");
+  }
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+// ---------- 左右翻页（按钮 + 键盘） ----------
+document.getElementById('btn-prev').onclick = () => showModel(modelIndex - 1);
+document.getElementById('btn-next').onclick = () => showModel(modelIndex + 1);
+
+// 调试：验证导航按钮渲染状态（正式版保留无害）
+console.log('[EasyModel] nav-btn: prev=' + document.getElementById('btn-prev').offsetWidth + ' next=' + document.getElementById('btn-next').offsetWidth);
+
+// ---------- 键盘：翻页 + 空格选视角 + Esc 关闭 ----------
+const faceModal = document.getElementById('face-modal');
+function openFaceModal() { faceModal.style.display = 'flex'; }
+function closeFaceModal() { faceModal.style.display = 'none'; }
+document.querySelectorAll('.face-btn').forEach((b) => {
+  b.onclick = () => { setFace(b.dataset.face); closeFaceModal(); };
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') showModel(modelIndex + 1);
+  else if (e.key === 'ArrowLeft') showModel(modelIndex - 1);
+  else if (e.code === 'Space') {
+    e.preventDefault();
+    if (faceModal.style.display === 'flex') closeFaceModal();
+    else openFaceModal();
+  } else if (e.key === 'Escape') {
+    closeFaceModal();
+    document.getElementById('view-menu').classList.remove('open');
+  }
+});
+
+// 正交模式下滚轮缩放（改投影尺寸；capture 阶段截获，阻止 Arcball 同时处理 wheel）
+window.addEventListener('wheel', (e) => {
+  if (!isOrtho || !current) return;
+  e.stopPropagation(); // Arcball 收不到滚轮，避免 position 漂移
+  // elements[0] = 2/(right-left) = 1/halfX，取倒数才是当前 halfX
+  const invHalfX = Math.abs(camera.projectionMatrix.elements[0]);
+  if (!isFinite(invHalfX) || invHalfX <= 0) return;
+  const halfX = 1 / invHalfX;
+  const aspect = camera.aspect;
+  const halfY = halfX / aspect;
+  // 缩放范围限制：模型半径的 0.01~100 倍（防极端缩放炸矩阵）
+  const box = new THREE.Box3().setFromObject(current);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const radius = Math.max(size.x, size.y, size.z) / 2 || 1;
+  const targetY = Math.max(radius * 0.01, Math.min(radius * 100, halfY * (1 + Math.sign(e.deltaY) * 0.1)));
+  const targetX = targetY * aspect;
+  camera.projectionMatrix.makeOrthographic(-targetX, targetX, targetY, -targetY, 0.01, 100000);
+}, { capture: true, passive: true });
+
+// ---------- 拖拽 ----------
+window.addEventListener('dragover', (e) => { e.preventDefault(); });
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = Array.from(e.dataTransfer.files || []);
+  if (!files.length) return;
+  const items = files.map((f) => ({ type: 'file', name: f.name, ext: (f.name.split('.').pop() || '').toLowerCase(), file: f }));
+  addModels(items, 'replace');
+  buildPreviewStrip();
+  showModel(0);
+});
+
+// ---------- 启动：恢复上次皮肤 ----------
+try {
+  if (localStorage.getItem('easymodel-theme') === 'light') document.body.classList.add('light');
+} catch { /* ignore */ }
+
+// ---------- 启动：优先加载命令行传入的文件 ----------
+const qs = new URLSearchParams(location.search);
+console.log('[EasyModel] search:', location.search);
+const initial = qs.get('file');
+console.log('[EasyModel] initial:', initial);
+if (initial) {
+  loadByPath(initial);
+} else {
+  document.getElementById('drop-hint').style.display = 'flex';
+}
+
+// ---------- 自适应 + 循环 ----------
+function resize() {
+  if (isThumbRendering) return;
+  const w = container.clientWidth, h = container.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  if (isOrtho) updateProjection();
+  else camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (window.__t1) { console.log('[EasyModel] firstFrame +' + (Date.now() - window.__t0) + 'ms'); window.__t1 = false; }
+  if (autoRotate) modelGroup.rotation.y += 0.012; // 模型绕自身中心自转  // 旋转中心约束在模型 bbox 内（防右键平移把中心拖出实物）
+  if (modelBox) {
+    const t = controls.target;
+    let changed = false;
+    if (t.x < modelBox.min.x) { t.x = modelBox.min.x; changed = true; }
+    else if (t.x > modelBox.max.x) { t.x = modelBox.max.x; changed = true; }
+    if (t.y < modelBox.min.y) { t.y = modelBox.min.y; changed = true; }
+    else if (t.y > modelBox.max.y) { t.y = modelBox.max.y; changed = true; }
+    if (t.z < modelBox.min.z) { t.z = modelBox.min.z; changed = true; }
+    else if (t.z > modelBox.max.z) { t.z = modelBox.max.z; changed = true; }
+    if (changed) controls.update();
+  }
+  // 视角状态节流保存（2 秒一次，跟皮肤一样自动记忆）
+  if (Date.now() - lastViewSave > 2000) { lastViewSave = Date.now(); saveView(); }
+  controls.update();
+  renderer.render(scene, camera);
+  updateGizmo();
+}
+
+window.addEventListener('beforeunload', saveView);
+animate();
+window.__t1 = true;
+</script>
+</body>
+</html>
