@@ -1,6 +1,6 @@
-// EasyModel 渲染核心（Hana 插件版 v1.1）
+// EasyModel 渲染核心（Hana 插件版 v2.0）
 // - 多格式渲染（STL/OBJ/PLY/GLB/GLTF/3MF/STEP/IGES）
-// - 放置位置：设置里可选右侧栏(widget) / 中间栏(page)，slot 不匹配自动跳转
+// - 单一 widget 入口：作为卡片在工作台任意位置摆放（v2.0 移除 right/center 二选一）
 // - 打开文件夹：加载首个模型 + 后台扫描目录 + 横向可滚动缩略图预览条
 // - 多文件工作集：◀▶ 切换 + 预览条点选
 
@@ -101,46 +101,7 @@ function extOf(name) {
   return i >= 0 ? String(name).slice(i + 1).toLowerCase() : "";
 }
 
-// ---------- 放置位置：读取配置 + slot 检测 + 自动跳转 ----------
-function detectSlot() {
-  const p = window.location.pathname || "";
-  return /\/center\/?$/.test(p) ? "page" : "widget";
-}
-async function resolvePlacement() {
-  let placement = "right";
-  try {
-    const res = await hana.api.fetch("/config");
-    if (res.ok) {
-      const data = await res.json();
-      placement = (data && data.values && data.values.placement) || "right";
-    }
-  } catch (_e) { /* 读不到就用默认右侧栏 */ }
-  return placement;
-}
-async function enforcePlacement() {
-  const slot = detectSlot();
-  const placement = await resolvePlacement();
-  window.__EM_DIAG.slot = slot;
-  window.__EM_DIAG.placement = placement;
-  if (slot === placement) return true;
-  if (slot === "widget" && placement === "center") {
-    // 右侧栏面板在「中间栏」模式下打开 → 跳到中间区 plugin tab
-    post({ type: "navigate-tab", payload: { tab: "plugin:" + currentPluginId() } });
-    document.body.innerHTML =
-      '<div style="height:100vh;display:flex;align-items:center;justify-content:center;color:#7f96a6;font-size:14px;text-align:center;line-height:2">已切换为「中间栏」模式<br>正在中间主区域打开查看器…<br><span style="font-size:12px;opacity:.7">本面板可关闭</span></div>';
-    return false;
-  }
-  if (slot === "page" && placement === "right") {
-    // 顶部 tab 在「右侧栏」模式下打开 → 回聊天区并提示
-    post({ type: "navigate-tab", payload: { tab: "chat" } });
-    document.body.innerHTML =
-      '<div style="height:100vh;display:flex;align-items:center;justify-content:center;color:#7f96a6;font-size:14px;text-align:center;line-height:2">查看器已设置为「右侧栏」模式<br>请点击右上角 EasyModel 图标使用</div>';
-    return false;
-  }
-  return true;
-}
-
-// ---------- 主入口：先定位置，再初始化渲染器 ----------
+// ---------- 主入口：直接初始化渲染器 ----------
 let container, scene, camera, renderer, controls, modelGroup, gridGroup;
 let current = null;
 let isWire = false;

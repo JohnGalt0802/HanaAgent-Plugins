@@ -1,8 +1,9 @@
 // 页面 + 模型数据路由（文件名 viewer.js → 前缀 /viewer）
-//   GET /viewer              页面 shell（widget：右侧栏）
-//   GET /viewer/center       页面 shell（page：中间区 tab）
+//   GET /viewer              页面 shell（widget：单一入口）
 //   GET /viewer/model        模型数据（网格格式→二进制；STEP/IGES→occt 解析 JSON）
 //   GET /viewer/scan         目录扫描（打开文件夹 → 列出可读模型文件）
+// v2.0：移除 right/center 二选一配置与 manifest 同步机制；改为单一 widget 入口，
+//      宿主卡片化后位置由用户在 chalkboard 自由摆放。
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -56,45 +57,6 @@ function escapeClosingScript(s) {
   return String(s).replace(/<\/script/gi, "<\\/script");
 }
 
-// ── 放置位置与 manifest 同步（严格唯一入口） ──
-// 配置变更后改写 manifest.json（只保留对应 surface：right→widget，center→page），重启 Hana 生效。
-// 完整双注册模板保留在 manifest.full.json，切换时从模板生成。
-const SURFACE_DEFS = {
-  widget: {
-    title: "EasyModel 模型查看",
-    route: "/viewer",
-    icon: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M12 2l8 4.5v9L12 20l-8-4.5v-9z\"/><path d=\"M12 11L4 6.5M12 11l8-4.5M12 11v9\"/></svg>",
-  },
-  page: {
-    title: "EasyModel 模型查看",
-    route: "/viewer/center",
-    icon: "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M12 2l8 4.5v9L12 20l-8-4.5v-9z\"/><path d=\"M12 11L4 6.5M12 11l8-4.5M12 11v9\"/></svg>",
-  },
-};
-async function syncManifestWithConfig(ctx) {
-  try {
-    const placement = (await ctx.config.get("placement")) || "right";
-    const manifestPath = path.join(pluginDir(), "manifest.json");
-    if (!fs.existsSync(manifestPath)) return false;
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    const wantsWidget = placement === "right";
-    const hasWidget = !!manifest.contributes.widget;
-    const hasPage = !!manifest.contributes.page;
-    if (hasWidget === wantsWidget && hasPage === !wantsWidget) return false; // 已一致
-    manifest.contributes = manifest.contributes || {};
-    if (wantsWidget) {
-      manifest.contributes.widget = JSON.parse(JSON.stringify(SURFACE_DEFS.widget));
-      delete manifest.contributes.page;
-    } else {
-      manifest.contributes.page = JSON.parse(JSON.stringify(SURFACE_DEFS.page));
-      delete manifest.contributes.widget;
-    }
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-    return true;
-  } catch (_e) {
-    return false;
-  }
-}
 let occtPromise = null;
 function getOCCT() {
   if (!occtPromise) occtPromise = require("occt-import-js")();
@@ -189,22 +151,13 @@ export default function registerViewerRoutes(app, ctx) {
     }
   });
 
-  // ── 查看器 HTML（widget /viewer 与 page /viewer/center 共用，slot 由路径区分） ──
+  // ── 查看器 HTML（单一 widget 入口 /viewer） ──
   // 注意：HTML 必须 no-store，否则 Chromium 启发式缓存会让 iframe 拿到旧页面
   const shellHandler = async (c) => {
     c.header("Cache-Control", "no-store");
-    let needsRestart = false;
-    try { needsRestart = await syncManifestWithConfig(ctx); } catch (_e) {}
-    const html = await renderShell(c, ctx);
-    if (needsRestart) {
-      const banner = '<div style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#8a5a00;color:#fff;text-align:center;font:13px/1.6 system-ui;padding:6px 12px">位置设置已变更：请完全重启 Hana 后生效（当前仍显示两个入口）</div>';
-      return c.html(html.replace("</body>", banner + "</body>"));
-    }
-    return c.html(html);
+    return c.html(await renderShell(c, ctx));
   };
   app.get("/em", shellHandler);
-  app.get("/center", shellHandler);
-  app.get("/center/", shellHandler);
   app.get("*", shellHandler);
 }
 
@@ -212,19 +165,8 @@ async function renderShell(c, ctx) {
   const hanaCss = c.req.query("hana-css") || "";
   const theme = c.req.query("hana-theme") || "inherit";
   const file = c.req.query("file") || "";
-  // 放置位置二选一：按 slot + 配置决定渲染查看器还是占位提示（不让两个入口同时有查看器）
-  const slot = /\/center\/?$/.test(c.req.path || "") ? "page" : "widget";
-  let placement = "right";
-  try {
-    placement = (await ctx.config.get("placement")) || "right";
-  } catch (_e) { /* 读不到用默认 */ }
-  const match = (slot === "widget" && placement === "right") || (slot === "page" && placement === "center");
-  if (!match) {
-    const tip = slot === "widget"
-      ? "查看器已设置为「中间栏」模式<br>请点击顶部 EasyModel 标签页使用"
-      : "查看器已设置为「右侧栏」模式<br>请点击右上角 EasyModel 图标使用";
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>EasyModel</title><style>html,body{height:100%;margin:0;background:#0e1724;font-family:system-ui,"Microsoft YaHei",sans-serif}body{display:flex;align-items:center;justify-content:center}.tip{color:#7f96a6;font-size:14px;text-align:center;line-height:2.2;padding:20px}.tip b{color:#9fc0e0;font-weight:600}</style></head><body><div class="tip">${tip}</div></body></html>`;
-  }
+  // 单一 widget 入口：直接渲染查看器（v2.0 移除 right/center 二选一，
+  // 宿主卡片化后位置由用户在 chalkboard 自由摆放）
   // importmap 在旧 Electron 内核不支持，且资产请求会被 CORP: same-origin 拦截，
   // 因此 three/loaders/viewer 全部内联，零外部依赖（与旧版 em-viewer.html 同思路）
   const inlineJs = escapeClosingScript(buildInlineJs());
