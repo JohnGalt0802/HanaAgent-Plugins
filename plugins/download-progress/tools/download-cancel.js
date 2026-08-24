@@ -25,7 +25,8 @@ export async function execute(input, toolCtx) {
   if (!taskId) throw new Error("缺少 taskId（来自 download-file 的返回值）");
 
   const manager = getTaskManager(toolCtx.dataDir);
-  const r = manager.cancel(taskId);
+  // source="agent"：与用户在卡片上手动取消（source="user"）区分，供通知/卡片展示取消来源
+  const r = manager.cancel(taskId, "agent");
   if (!r.ok) {
     return {
       content: [{ type: "text", text: `取消失败：${r.error || "任务不存在"}` }],

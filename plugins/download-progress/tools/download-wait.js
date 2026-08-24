@@ -1,18 +1,34 @@
-// tools/download-wait.js — 下载等待/回查工具
-// 两种模式（可在插件设置里切换默认）：
-//   auto（默认）：工具内部先拿文件总大小，按分档规则本地估算等待阈值（不费 LLM 算力）；
-//                 若显式传入 timeoutMs 则作为阈值上限覆盖。
-//   manual：直接用 timeoutMs（未传则用插件设置 manualTimeoutMs，默认 60000）。
-// 轮询过程中检测"卡死"（进度长时间不动）会提前返回，不等阈值到点。
-// 返回完整进度快照供 Agent 决策（继续等 / 取消 / 换源）。
+// tools/download-wait.js — 下载等待/回查工具（v0.4.0：健康续窗 + 双窗降速警报）
+//
+// 设计原则（v0.4.0 定稿）：
+//   检测归脚本，决策归 Agent。健康状态下 wait 一直挂着直到终态，
+//   Agent 不被打扰；唯一的提前返回口是「异常」：
+//   - 终态（done/failed/canceled/interrupted）→ 正常出口
+//   - 停滞（后端 stalled 标记 / 本地 20s 无进展）→ 清零立即返回
+//   - 双窗降速（连续两个检测窗均速 < EMA 基线 ×30%）→ 带诊断包返回，交 Agent 决策
+//
+// 检测窗模型：
+//   - 首窗 5s：仅建立 EMA 基线，不判定（豁免 TCP 慢启动）
+//   - 此后每 10s 一个检测窗：均速 < EMA×30% 且上窗亦然 → 触发降速警报
+//   - EMA 更新：baseline = baseline×0.7 + winSpeed×0.3（反映近期常态，抗单点抖动）
+//   - 任务处于 pending 等非运行态时窗口顺延，不消耗检测点
+//
+// 模式：
+//   auto（默认）：上述全自动守望。
+//   self（慎用）：Agent 全权——传 timeoutMs 硬等，不传查一次立即返回。
+// notifyWhenDone=true（大文件专用）：wait 时间清零即时返回快照；
+//   若任务仍在下则注册 deferred 双占位（终态+停滞），回合结束后终态投递唤醒 Agent。
 
 import { getTaskManager } from "../lib/dlcore.js";
 
 export const name = "download-wait";
 export const description =
-  "等待并回查一个下载任务的进度（与 download-file 配合使用）。内部轮询任务状态，直到任务完成、失败、被取消、达到超时时间，或检测到进度长时间不动（疑似卡死）。" +
-  "auto 模式（默认）会自动按文件大小估算合理等待时长，Agent 无需自己算阈值；也可传 timeoutMs 手动指定。" +
-  "返回最新进度快照（state/total/received/percent/speed/eta/error/filePath/stalled 等），Agent 据此决策：正常→继续等；疑似卡死或速度过慢→取消/换源；完成→使用文件；失败→按错误重试。";
+  "等待并回查一个下载任务的进度（与 download-file 配合使用）。\n" +
+  "auto 模式（默认，推荐）：脚本全程守望——健康则持续等待直到终态（期间零打扰），\n" +
+  "异常立即返回：完成/失败/取消正常返回；停滞或连续两个检测窗（10s/窗）均速跌破常态基线 30%\n" +
+  "则带诊断包（当前速度/基线/比值/ETA）提前返回，交 Agent 决策（换源/接受慢速/取消）。\n" +
+  "notifyWhenDone=true 用于结束回合前：立即返回快照并注册后台通知，离场后终态投递唤醒。\n" +
+  "self 模式（慎用）：Agent 全权决定回查节奏。";
 
 export const parameters = {
   type: "object",
@@ -23,34 +39,30 @@ export const parameters = {
     },
     mode: {
       type: "string",
-      enum: ["auto", "manual"],
-      description: "可选：auto=按文件大小自动估算等待阈值（默认，也可在插件设置中切换）；manual=用 timeoutMs 手动阈值",
+      enum: ["auto", "self"],
+      description: "可选：auto=脚本全程守望（默认，推荐）；self=Agent 自觉回查（回查时机与等待时长全由 Agent 自主决定，不传 timeoutMs 则查一次立即返回；慎用，会增加调用与上下文占用）",
     },
     timeoutMs: {
       type: "number",
-      description: "可选：手动等待毫秒数（manual 模式必用；auto 模式下作为估算阈值的上限）。默认按模式取插件设置值。",
+      description: "可选：auto 模式下作为总等待硬上限（安全阀，默认 30 分钟）；self 模式下是 Agent 自定的等待时长（不传则查一次立即返回）",
+    },
+    notifyWhenDone: {
+      type: "boolean",
+      description: "可选（大文件专用）：设为 true 表示'本次回查后会话将结束，若下载未完成请在完成/失败时通知我'——工具立即返回当前快照（不等观察窗），若任务仍在下则注册后台通知（deferred），下载完成/失败时宿主投递提醒唤醒 Agent。仅 Agent 决定结束回合且下载未完时使用；小下载用普通 wait 等到 done 即可，无需此参数。",
     },
   },
   required: ["taskId"],
 };
 
-const HARD_CAP_MS = 30 * 60 * 1000;   // 单次等待硬上限 30 分钟
-const STALL_MS = 20 * 1000;           // 进度无进展超过 20s 判定疑似卡死
-const POLL_MS = 1000;
+const HARD_CAP_MS = 30 * 60 * 1000;   // 单次等待硬上限（安全阀，防无限挂起）
+const STALL_MS = 20 * 1000;           // 进度无进展超过 20s 判定疑似卡死（速度为零的哨兵）
+const POLL_MS = 500;                  // 轮询粒度（onceFinal 事件穿透，轮询只是兜底）
+const FIRST_WINDOW_S = 5;             // 首窗：仅建立基线，不判定
+const WINDOW_S = 10;                  // 常规检测窗：10s
+const DROP_RATIO = 0.3;               // 降速判定线：均速 < EMA × 30%
+const EMA_ALPHA = 0.3;                // EMA 新样本权重（反映近期常态）
 
-// auto 分档估算：文件越小档位越短（单位毫秒）；有同域名历史速度时用 total/历史速度×1.5 更准
-function autoTimeoutFor(total, histSpeed) {
-  if (total == null) return 60_000;              // 无 Content-Length：保守 60s
-  if (histSpeed && histSpeed > 0) {
-    const est = Math.round((total / histSpeed) * 1000 * 1.5); // 安全系数 1.5
-    return Math.min(Math.max(est, 15_000), 3_600_000);        // 15s ~ 60min
-  }
-  if (total <= 10 * 1024 * 1024) return 60_000;   // ≤10MB
-  if (total <= 100 * 1024 * 1024) return 300_000; // ≤100MB
-  if (total <= 500 * 1024 * 1024) return 900_000; // ≤500MB
-  if (total <= 2 * 1024 * 1024 * 1024) return 1_800_000; // ≤2GB
-  return 3_600_000;                               // 更大
-}
+const FINAL = { done: 1, failed: 1, canceled: 1, interrupted: 1 };
 
 export async function execute(input, toolCtx) {
   const taskId = String(input?.taskId || "").trim();
@@ -58,20 +70,23 @@ export async function execute(input, toolCtx) {
 
   const manager = getTaskManager(toolCtx.dataDir);
 
-  const FINAL = { done: 1, failed: 1, canceled: 1, interrupted: 1 };
-
   // ── 模式解析：显式 mode > 插件设置 > 默认 auto ──
-  let mode = String(input?.mode || "").toLowerCase() === "manual" ? "manual" : "auto";
-  try {
-    const cfg = toolCtx.config?.get?.("waitMode");
-    if (cfg === "manual") mode = "manual";
-  } catch { /* 忽略配置错误 */ }
+  const explicitMode = String(input?.mode || "").toLowerCase();
+  let mode = explicitMode === "self" || explicitMode === "manual" ? "self"
+    : explicitMode === "auto" ? "auto" : null;
+  if (!mode) {
+    mode = "auto";
+    try {
+      if (toolCtx.config?.get?.("waitMode") === "self") mode = "self";
+    } catch { /* 忽略配置错误 */ }
+  }
 
   let manualMs = 60_000;
   try {
     const v = Number(toolCtx.config?.get?.("manualTimeoutMs"));
     if (Number.isFinite(v) && v > 0) manualMs = v;
   } catch { /* 忽略 */ }
+  void manualMs;
 
   // ── 先拿第一帧（任务可能刚创建；total 在下载开始后才有，最多等 5s）──
   const t0 = Date.now();
@@ -85,37 +100,50 @@ export async function execute(input, toolCtx) {
     return { content: [{ type: "text", text: `任务 ${taskId} 不存在或已过期（可能已被清理）。` }] };
   }
 
-  // ── 计算等待阈值 ──
-  let timeoutMs;
-  let thresholdUsed;
-  if (mode === "manual") {
-    timeoutMs = Number.isFinite(Number(input?.timeoutMs)) && Number(input.timeoutMs) > 0
-      ? Number(input.timeoutMs)
-      : manualMs;
-    thresholdUsed = `manual(${timeoutMs}ms)`;
-  } else {
-    let histSpeed = null;
-    try {
-      const u = new URL(snap.url || "");
-      if (u.host) histSpeed = manager.getHostSpeed(u.host);
-    } catch { /* 忽略 */ }
-    timeoutMs = autoTimeoutFor(snap.total, histSpeed);
-    if (Number.isFinite(Number(input?.timeoutMs)) && Number(input.timeoutMs) > 0) {
-      timeoutMs = Math.min(timeoutMs, Number(input.timeoutMs));
-    }
-    thresholdUsed = `auto(${timeoutMs}ms)` + (snap.total != null ? `, total=${fmtBytes(snap.total)}` : "") + (histSpeed ? `, 历史速度 ${fmtBytes(histSpeed)}/s` : "");
-  }
-  timeoutMs = Math.min(timeoutMs, HARD_CAP_MS);
+  // ── notifyWhenDone：即时快照 + 若未完成注册 deferred 双占位 ──
+  const notifyWhenDone = input?.notifyWhenDone === true || String(input?.notifyWhenDone) === "true";
 
-  // ── 轮询：完成 / 失败 / 超时 / 卡死提前返回 ──
+  // ── self 模式的等待窗 ──
+  const explicitTimeoutMs = Number.isFinite(Number(input?.timeoutMs)) && Number(input.timeoutMs) > 0
+    ? Number(input.timeoutMs)
+    : null;
+  let windowMs;
+  let thresholdUsed;
+  if (notifyWhenDone) {
+    windowMs = 0;
+    thresholdUsed = "notifyWhenDone(即时快照+后台通知)";
+  } else if (mode === "self") {
+    if (explicitTimeoutMs) {
+      windowMs = Math.min(explicitTimeoutMs, HARD_CAP_MS);
+      thresholdUsed = `self(${Math.round(windowMs / 1000)}s)`;
+    } else {
+      windowMs = 0;
+      thresholdUsed = "self(即时快照)";
+    }
+  } else {
+    // auto：健康续窗模型——循环内按检测窗推进直至终态，硬上限兜底
+    windowMs = explicitTimeoutMs ? Math.min(explicitTimeoutMs, HARD_CAP_MS) : HARD_CAP_MS;
+    thresholdUsed = `auto(守望至终态, 上限 ${Math.round(windowMs / 60000)}min)`;
+  }
+
+  // ── 等待主循环 ──
   const start = Date.now();
   let lastReceived = snap.received;
   let lastMove = Date.now();
   let stalled = false;
   let percentAtReturn = snap.percent;
 
-  while (!FINAL[snap.state] && Date.now() - start < timeoutMs) {
-    await sleep(POLL_MS);
+  // 双窗降速检测状态
+  let baseline = null;        // EMA 基线（近期常态均速，字节/秒）
+  let prevWindowSlow = false; // 上一检测窗是否低于阈值
+  let slowAlert = false;      // 双窗降速触发
+  let winStartT = start;         // 当前检测窗起点时间
+  let winStartR = snap.received; // 当前检测窗起点字节
+  let nextCheckAt = start + FIRST_WINDOW_S * 1000; // 首窗 5s：只建基线不判定
+
+  while (!FINAL[snap.state] && Date.now() - start < windowMs) {
+    // 终态即时唤醒：手动取消/完成瞬间穿透，不等轮询间隔
+    await Promise.race([sleep(POLL_MS), manager.onceFinal(taskId)]);
     snap = manager.snapshot(taskId);
     if (!snap) {
       return {
@@ -123,14 +151,45 @@ export async function execute(input, toolCtx) {
       };
     }
     percentAtReturn = snap.percent;
-    // 卡死检测：下载中但进度（received）长时间无进展。total 未知（chunked）时也纳入检测
-    if (snap.state === "running" && snap.received > 0 && (snap.total == null || snap.received < snap.total)) {
-      if (snap.received !== lastReceived) {
+
+    if (snap.state === "running") {
+      // 后端停滞标记（dlcore 层 30s 无新数据）→ 立即返回
+      if (snap.stalledAt != null) { stalled = true; break; }
+      // 本地卡死检测：received 连续 20s 无增长（覆盖 chunked）
+      if (snap.received > lastReceived) {
         lastReceived = snap.received;
         lastMove = Date.now();
       } else if (Date.now() - lastMove >= STALL_MS) {
         stalled = true;
         break;
+      }
+    }
+
+    // ── 双窗降速检测（仅 auto 模式；pending 等非运行态顺延窗口，不消耗检测点）──
+    if (mode === "auto" && !notifyWhenDone && Date.now() >= nextCheckAt) {
+      if (snap.state !== "running") {
+        nextCheckAt = Date.now() + 1000; // 未开跑：顺延，不消耗检测点
+      } else {
+        const now = Date.now();
+        const durS = Math.max(0.001, (now - winStartT) / 1000);
+        const winSpeed = (snap.received - winStartR) / durS; // 字节/秒
+
+        if (baseline === null) {
+          // 首窗：仅建立基线，不判定（豁免慢启动）
+          baseline = Math.max(winSpeed, 1);
+        } else {
+          const isSlow = winSpeed < baseline * DROP_RATIO;
+          if (isSlow && prevWindowSlow) {
+            slowAlert = true;
+            break; // 连续两窗低于基线 30% → 带诊断包交 Agent 决策
+          }
+          prevWindowSlow = isSlow;
+          baseline = baseline * (1 - EMA_ALPHA) + winSpeed * EMA_ALPHA; // EMA 更新
+        }
+        // 开新窗
+        winStartT = now;
+        winStartR = snap.received;
+        nextCheckAt = now + WINDOW_S * 1000;
       }
     }
   }
@@ -140,10 +199,16 @@ export async function execute(input, toolCtx) {
   const etaSeconds = etaSecondsOf(snap, done);
   const speedOk = snap.speed > 0 || done;
 
+  // ── 组装输出 ──
   const parts = [];
-  if (stalled) parts.push("疑似卡死：下载进度已 20s 无进展");
-  else if (done) parts.push(`下载结束（${snap.state}）`);
-  else parts.push(`等待 ${Math.round(elapsedMs / 1000)}s 后仍在下载中（未完成，阈值 ${thresholdUsed}）`);
+  if (stalled) parts.push("疑似卡死：下载进度已 20s 无进展或后端停滞标记");
+  else if (done) parts.push(`下载结束（${snap.state}${snap.canceledBy === "user" ? "，用户在卡片上手动取消" : ""}）`);
+  else if (slowAlert) {
+    const ratio = baseline ? Math.round((snap.speed / baseline) * 100) : null;
+    parts.push(`降速警报：连续两个检测窗（${WINDOW_S}s/窗）均速低于常态基线的 ${Math.round(DROP_RATIO * 100)}%`
+      + `（当前 ${fmtBytes(snap.speed)}/s ≈ 基线 ${fmtBytes(baseline)}/s 的 ${ratio == null ? "?" : ratio + "%"}），请决策：换源重下 / 接受慢速继续（再次调用 wait 守望）/ 取消任务`);
+  } else if (mode === "self" && !explicitTimeoutMs) parts.push("快照（self 模式即时返回，Agent 自主决定回查节奏）");
+  else parts.push(`等待 ${Math.round(elapsedMs / 1000)}s 后仍在下载中（未完成，已达上限 ${thresholdUsed}）——健康下载会一直守到终态，本次返回即触及上限`);
   parts.push(`进度 ${percentAtReturn == null ? "—" : percentAtReturn + "%"}`);
   parts.push(`已下载 ${fmtBytes(snap.received)}` + (snap.total ? ` / ${fmtBytes(snap.total)}` : ""));
   if (snap.speed > 0) parts.push(`速度 ${fmtBytes(snap.speed)}/s`);
@@ -158,10 +223,14 @@ export async function execute(input, toolCtx) {
       download: {
         taskId: snap.taskId,
         state: snap.state,
+        canceledBy: snap.canceledBy || null,
+        userCanceled: snap.canceledBy === "user",
         done: done,
-        timedOut: !done && !stalled,
+        timedOut: !done && !stalled && !slowAlert,
         stalled: stalled,
         stalledAt: snap.stalledAt || null,
+        slowAlert: slowAlert,
+        speedBaseline: slowAlert ? Math.round(baseline) : null,
         mode: mode,
         thresholdUsed: thresholdUsed,
         waitedMs: elapsedMs,

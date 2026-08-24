@@ -4,6 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
@@ -17,8 +20,9 @@ const SPEED_SAMPLES_MAX = 5;   // 滑动窗口样本数（≈3.5s）
 const CHUNK_SLEEP_MIN_MS = 1;  // 限速时 chunk 间最小等待
 
 let _instance = null;
-const MGR_VER = 12; // 每次修改管理器逻辑 +1：globalThis 单例按版本换新实例，绕开插件加载器的 lib 模块缓存
-// v1.6.0: 命令型任务（git clone / pnpm install）——_runCommand + 停滞监视器提取 + kind/cmd/unit/stage/child 字段
+const MGR_VER = 18; // 每次修改管理器逻辑 +1：globalThis 单例按版本换新实例，绕开插件加载器的 lib 模块缓存
+// v0.1.6: 下载核心支持 HTTP CONNECT 代理（环境变量/config.json proxy/Windows 系统代理），
+// 代理优先 + 失败自动降级直连；支持 3xx 与文本重定向（"Redirecting to <url>"，如 npmmirror）。
 
 // 真单例：插件加载器按 import 字符串（./lib vs ../lib）缓存模块，可能产生多个模块实例，
 // 用 globalThis 兜底保证所有引用方拿到同一个 TaskManager；版本变化时强制重建。
@@ -91,7 +95,26 @@ class TaskManager {
   // 注册终态回调（done/failed/canceled），供插件层做 deferred 通知
   onFinal(cb) { this._finalCb = typeof cb === "function" ? cb : null; }
 
+  // 终态一次性等待：终态到达（或已是终态）时立即 resolve。
+  // 供 download-wait 实现「取消/完成即时唤醒」，不再等轮询间隔。
+  onceFinal(taskId) {
+    return new Promise((resolve) => {
+      if (!this._finalWaiters) this._finalWaiters = new Map();
+      const t = this.tasks.get(taskId);
+      if (t && (t.state === "done" || t.state === "failed" || t.state === "canceled" || t.state === "interrupted")) { resolve(t); return; }
+      let set = this._finalWaiters.get(taskId);
+      if (!set) { set = new Set(); this._finalWaiters.set(taskId, set); }
+      const wrapped = (task) => { set.delete(wrapped); resolve(task); };
+      set.add(wrapped);
+    });
+  }
+
   _fireFinal(task) {
+    // 唤醒挂起的 onceFinal waiter（立即返回，不等轮询）
+    try {
+      const set = this._finalWaiters && task ? this._finalWaiters.get(task.taskId) : null;
+      if (set && set.size) { this._finalWaiters.delete(task.taskId); for (const fn of [...set]) { try { fn(task); } catch { /* 忽略单个 waiter 异常 */ } } }
+    } catch { /* 唤醒异常不影响通知 */ }
     if (!this._finalCb || !task) return;
     const s = task.state;
     if (s === "done" || s === "failed" || s === "canceled" || s === "interrupted") {
@@ -242,49 +265,93 @@ class TaskManager {
 
     const ws = fs.createWriteStream(task.filePath);
     this._startStallMonitor(task);
+    const controller = task.controller;
+    let req = null;
+    // 取消：destroy 底层请求（触发 error → catch 按 canceled 处理）
+    const abortListener = () => { try { if (req) req.destroy(new AbortError("canceled by user")); } catch { /* 忽略 */ } };
+    controller.signal.addEventListener("abort", abortListener);
     try {
-      const res = await fetch(task.url, {
-        signal: task.controller.signal,
-        redirect: "follow",
-        headers: {
-          "User-Agent": "HanaAgent/1.0 (download-progress)",
-          "Accept": "*/*",
-        },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      if (!res.body) throw new Error("响应没有可读取的内容");
+      const targetUrl = new URL(task.url);
+      // 本地回环目标永不走代理：回环流量经代理隧道既慢又不稳定（实测被中途掐断）
+      const isLoopback = ["127.0.0.1", "localhost", "[::1]", "::1"].includes(targetUrl.hostname)
+        || /^127\./.test(targetUrl.hostname);
+      const proxy = isLoopback ? "" : resolveProxy(this.dataDir);
+      const mod = targetUrl.protocol === "https:" ? https : http;
 
-      const cl = parseInt(res.headers.get("content-length") || "", 10);
+      // 请求 + 重定向（3xx 与文本重定向，如 npmmirror 的 "Redirecting to ..."）
+      // 代理策略：优先走代理，若代理失败（网络错/HTTP 4xx/5xx）自动降级直连重试一次
+      let target = task.url;
+      let res = null;
+      let preBuffer = null; // 文本重定向检测时缓冲的小 body（非重定向时写回流）
+      let lastReqErr = null;
+      const proxyAttempts = proxy ? [proxy, null] : [null];
+      for (let pi = 0; pi < proxyAttempts.length && !res; pi++) {
+        const useProxy = proxyAttempts[pi];
+        const useAgent = useProxy ? createTunnelAgent(useProxy) : undefined;
+        let current = target;
+        let redirects = 0;
+        try {
+          while (redirects < 5) {
+            res = await new Promise((resolve, reject) => {
+              const r = mod.request(current, {
+                agent: useAgent,
+                headers: {
+                  "User-Agent": "HanaAgent/1.0 (download-progress)",
+                  "Accept": "*/*",
+                },
+              }, (resp) => resolve(resp));
+              req = r;
+              r.on("error", reject);
+              r.end();
+            });
+            const sc = res.statusCode || 0;
+            // 标准 3xx 重定向
+            if ((sc === 301 || sc === 302 || sc === 303 || sc === 307 || sc === 308) && res.headers.location) {
+              res.resume();
+              current = new URL(res.headers.location, current).toString();
+              redirects++;
+              continue;
+            }
+            // 4xx/5xx：代理路径下视为可能被风控，降级直连重试；直连路径直接失败
+            if (sc >= 400) {
+              res.resume();
+              if (useProxy) { res = null; break; }
+              throw new Error(`HTTP ${sc} ${res.statusMessage || ""}`);
+            }
+            // 文本重定向（如 npmmirror 返回 200 + "Redirecting to <url>"）
+            const small = await readSmallBody(res);
+            if (small) {
+              const text = small.toString("utf8");
+              const m = /^Redirecting to\s+(\S+)/.exec(text.trim());
+              if (m) {
+                current = new URL(m[1], current).toString();
+                redirects++;
+                continue;
+              }
+              preBuffer = small; // 真小文件：缓冲数据留待写回流
+            }
+            break; // 正常响应
+          }
+          if (!res) continue; // 降级直连
+        } catch (e) {
+          lastReqErr = e;
+          res = null;
+          // 代理失败降级直连；直连也失败则保留最后错误
+        }
+      }
+      if (!res) throw (lastReqErr || new Error("HTTP 请求失败"));
+
+      if (!res.statusCode || res.statusCode >= 400) throw new Error(`HTTP ${res.statusCode} ${res.statusMessage || ""}`);
+
+      const cl = parseInt(res.headers["content-length"] || "", 10);
       task.total = Number.isFinite(cl) && cl > 0 ? cl : null;
 
-      const reader = res.body.getReader();
-      let lastTick = Date.now();
-      let lastBytes = 0;
-      let chunkStart = Date.now();
-      for (;;) {
-        if (task.cancelRequested) {
-          throw new AbortError("canceled by user");
-        }
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value && value.length) {
-          ws.write(Buffer.from(value));
-          task.received += value.length;
-          task._lastProgressAt = Date.now();
-          if (task.stalledAt != null) {
-            // 进度恢复自动解除停滞，允许再次停滞再通知
-            task.stalledAt = null;
-            task.stallNotified = false;
-          }
-          // 已知总大小且已收满：提前收尾，避免 undici 在连接关闭边界再次 read() 时报 terminated
-          if (task.total != null && task.received >= task.total) break;
-          // 限速：按 chunk 耗时反推应等待时间
-          if (task.speedLimit > 0) {
-            const want = (value.length / task.speedLimit) * 1000;
-            const used = Date.now() - chunkStart;
-            if (want > used) await sleep(want - used + CHUNK_SLEEP_MIN_MS);
-          }
-          chunkStart = Date.now();
+      // 流式接收 + 进度采样 + 限速（与旧 fetch 版逻辑一致）
+      await new Promise((resolve, reject) => {
+        let lastTick = Date.now();
+        let lastBytes = 0;
+        let chunkStart = Date.now();
+        const speedSample = () => {
           const now = Date.now();
           if (now - lastTick >= SPEED_SAMPLE_MS) {
             const inst = (task.received - lastBytes) / ((now - lastTick) / 1000);
@@ -294,23 +361,55 @@ class TaskManager {
             lastTick = now;
             lastBytes = task.received;
           }
+        };
+        const processChunk = (chunk) => {
+          if (task.cancelRequested) { try { if (req) req.destroy(); } catch { /* 忽略 */ } return; }
+          ws.write(chunk);
+          task.received += chunk.length;
+          task._lastProgressAt = Date.now();
+          if (task.stalledAt != null) {
+            task.stalledAt = null;
+            task.stallNotified = false;
+          }
+          // 已知总大小且已收满：提前收尾（与服务端关闭边界一致）
+          if (task.total != null && task.received >= task.total) {
+            try { if (req) req.destroy(); } catch { /* 忽略 */ }
+            return;
+          }
+          // 限速：暂停流 + 定时恢复
+          if (task.speedLimit > 0) {
+            const want = (chunk.length / task.speedLimit) * 1000;
+            const used = Date.now() - chunkStart;
+            if (want > used) {
+              res.pause();
+              setTimeout(() => { chunkStart = Date.now(); res.resume(); }, want - used + CHUNK_SLEEP_MIN_MS);
+            } else { chunkStart = Date.now(); }
+          }
+          speedSample();
+        };
+        if (preBuffer && preBuffer.length) processChunk(preBuffer);
+        if (preBuffer) {
+          // 小文件已由 readSmallBody 完整缓冲（读到 end），直接收尾
+          ws.end((err) => (err ? reject(err) : resolve()));
+        } else {
+          res.on("data", processChunk);
+          res.on("end", () => {
+            ws.end((err) => (err ? reject(err) : resolve()));
+          });
+          res.on("error", reject);
+          req.on("error", reject);
         }
-      }
-
-      await new Promise((resolve, reject) => {
-        ws.end((err) => (err ? reject(err) : resolve()));
       });
 
       // 流正常结束即下载完整：总大小未知（chunked 无 Content-Length）或声明值与实际不符
-      // （如 Content-Encoding 自动解压时 received 为解压后字节）时，以实际接收为准兜底，
-      // 保证完成态进度条/大小/落盘数据自洽。注意：received < total 不拉低（undici 对 CL 不符
-      // 会抛 terminated 走 catch；此处正常 done 说明服务器已发完，CL 虚高则保持原值警示）
+      // （如 Content-Encoding 自动解压时 received 为解压后字节）时，以实际接收为准兜底。
+      // received < total 不拉低（若服务器提前断开会走 error/abort 分支）。
       if (task.received > 0 && (task.total == null || task.received > task.total)) task.total = task.received;
 
       task.state = "done";
       task.finishedAt = Date.now();
     } catch (e) {
-      const aborted = task.cancelRequested || e?.name === "AbortError";
+      const aborted = task.cancelRequested || e?.name === "AbortError" || controller.signal.aborted;
       // 注意：chunked（total=null）半途断连时 complete 恒为 false，会走下方删除分支——
       // body 无长度声明无法验证完整性，failed + 删半成品是保守正确。勿放宽此判定为
       // (total==null || received>=total)：会把残缺文件误判为完成保下来，比删文件更糟。
@@ -339,6 +438,7 @@ class TaskManager {
       }
       task.finishedAt = Date.now();
     } finally {
+      try { controller.signal.removeEventListener("abort", abortListener); } catch { /* 忽略 */ }
       this._stopStallMonitor(task);
       task.elapsed = (task.finishedAt || Date.now()) - (task.startedAt || Date.now());
       // 记录历史速度（按域名），供 wait auto 模式估算阈值
@@ -442,12 +542,14 @@ class TaskManager {
   }
 
   // ── 取消 ──
-  cancel(taskId) {
+  // source: "user"=用户在卡片上手动取消 | "agent"=Agent 调工具取消（默认）| "system"=系统自动
+  cancel(taskId, source = "agent") {
     const t = this.tasks.get(taskId);
     if (!t) return { ok: false, error: "任务不存在" };
     if (t.state === "pending") {
       if (t.pendingTimer) clearTimeout(t.pendingTimer);
       t.state = "canceled";
+      t.canceledBy = source;
       t.error = "已取消";
       t.finishedAt = Date.now();
       this._persist();
@@ -455,6 +557,7 @@ class TaskManager {
       return { ok: true };
     }
     if (t.state !== "running") return { ok: false, error: "任务已结束" };
+    t.canceledBy = source;
     t.cancelRequested = true;
     if (t.kind === "command" && t.child && t.child.pid) {
       // Windows 杀进程树；非 Windows 信号
@@ -482,6 +585,7 @@ class TaskManager {
       fileName: t.fileName,
       filePath: t.filePath,
       state: t.state,
+      canceledBy: t.canceledBy || null,
       stalled: t.stalledAt != null,
       stalledAt: t.stalledAt,
       total: t.total,
@@ -496,7 +600,21 @@ class TaskManager {
       cmd: t.cmd || null,
       unit: t.unit || "bytes",
       stage: t.stage || null,
+      sessionId: t.sessionId || null,
+      sessionPath: t.sessionPath || null,
+      saveDir: t.saveDir || null,
+      speedLimit: t.speedLimit || 0,
     };
+  }
+
+  // ── 全部任务快照（跨会话下载管理器用）：在途优先，终态按结束时间倒序 ──
+  list() {
+    const all = [...this.tasks.values()];
+    const active = all.filter((t) => t.state === "running" || t.state === "pending");
+    const final = all.filter((t) => t.state !== "running" && t.state !== "pending")
+      .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
+    const ordered = [...active, ...final];
+    return ordered.map((t) => this.snapshot(t.taskId)).filter(Boolean);
   }
 
   // ── 重启恢复：running → interrupted、pending → interrupted（定时器丢失），删除半成品 ──
@@ -567,7 +685,7 @@ class TaskManager {
       for (const t of overflow) this.tasks.delete(t.taskId);
 
       const meta = {
-        version: 2,
+        version: 3,
         updatedAt: Date.now(),
         tasks: [...this.tasks.values()].map((t) => ({
           taskId: t.taskId, url: t.url, fileName: t.fileName, filePath: t.filePath,
@@ -575,10 +693,13 @@ class TaskManager {
           speedLimit: t.speedLimit || 0,
           startedAt: t.startedAt, finishedAt: t.finishedAt, elapsed: t.elapsed,
           error: t.error,
+          canceledBy: t.canceledBy || null,
           kind: t.kind || "url",
           cmd: t.cmd || null,
           unit: t.unit || "bytes",
-          stalledAt: t.stalledAt || null, // 停滞为运行时标记，仅存时间戳用于恢复展示；stallNotified/_lastProgressAt/_stallTimer/stallTimeoutMs 不持久化
+          stalledAt: t.stalledAt || null,
+          sessionId: t.sessionId || null,
+          sessionPath: t.sessionPath || null,
         })),
       };
       fs.mkdirSync(this.dataDir, { recursive: true });
@@ -676,11 +797,105 @@ function uniquePath(p) {
 function friendlyError(e) {
   const msg = e?.message || String(e || "");
   const low = msg.toLowerCase();
+  const cause = e?.cause;
+  const causeCode = cause && cause.code ? `（${cause.code}）` : "";
   if (low.includes("terminated")) return "连接被中断（terminated）";
-  if (low.includes("fetch failed")) return "网络请求失败";
+  if (low.includes("fetch failed") || low.includes("socket hang up") || low.includes("econnreset")) {
+    return "网络请求失败" + causeCode;
+  }
   if (low.includes("aborted")) return "请求被中止";
   if (low.includes("content-length") || low.includes("length")) return "响应异常（长度不符）";
-  return msg;
+  return msg + causeCode;
+}
+
+// ── 代理支持（无第三方依赖）──
+// 优先级：环境变量 HTTPS_PROXY/HTTP_PROXY > 插件 config.json 的 proxy 字段 > Windows 系统代理（注册表）
+function resolveProxy(dataDir) {
+  const envP = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || "";
+  if (envP) return envP;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(dataDir, "config.json"), "utf-8") || "{}");
+    if (cfg && cfg.proxy) return String(cfg.proxy);
+  } catch { /* 无配置则跳过 */ }
+  try {
+    const out = spawnSync(
+      "reg",
+      ["query", 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings', "/v", "ProxyServer"],
+      { encoding: "utf8", windowsHide: true, timeout: 5000 }
+    );
+    const m = /ProxyServer\s+REG_SZ\s+([^\r\n]+)/.exec(out.stdout || "");
+    if (m && m[1].trim()) {
+      const p = m[1].trim();
+      if (p.startsWith("http://") || p.startsWith("https://")) return p;
+      return "http://" + p;
+    }
+  } catch { /* 读注册表失败则直连 */ }
+  return "";
+}
+
+// 小响应缓冲：Content-Length < 4KB 时读完整 body，用于检测文本重定向
+// （npmmirror 等返回 200 + "Redirecting to <url>" 的非标准重定向）。
+// 非重定向时返回 Buffer（由调用方写回流），重定向/异常返回 null 由上层处理。
+function readSmallBody(res) {
+  const cl = parseInt(res.headers["content-length"] || "", 10);
+  if (!(Number.isFinite(cl) && cl >= 0 && cl < 4096)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const chunks = [];
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      res.removeListener("data", onData);
+      res.removeListener("end", onEnd);
+      res.removeListener("error", onErr);
+      resolve(v);
+    };
+    const onData = (c) => {
+      chunks.push(c);
+      const total = chunks.reduce((a, b) => a + b.length, 0);
+      if (total > 8192) finish(null);
+    };
+    const onEnd = () => finish(chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0));
+    const onErr = () => finish(null);
+    res.on("data", onData);
+    res.on("end", onEnd);
+    res.on("error", onErr);
+    setTimeout(() => finish(null), 3000);
+  });
+}
+
+// 手写 HTTP CONNECT 隧道 Agent（https.Agent 负责后续 TLS）
+function createTunnelAgent(proxyUrl) {
+  let pu;
+  try { pu = new URL(proxyUrl); } catch { return null; }
+  if (pu.protocol !== "http:" && pu.protocol !== "https:") return null;
+  const port = Number(pu.port) || (pu.protocol === "http:" ? 80 : 443);
+  const agent = new https.Agent({ keepAlive: false });
+  agent.createConnection = function (options, cb) {
+    const host = options.host;
+    const targetPort = options.port || 443;
+    const socket = net.connect(port, pu.hostname, function () {
+      const cReq = http.request({
+        host: pu.hostname,
+        port: port,
+        method: "CONNECT",
+        path: host + ":" + targetPort,
+        headers: { Host: host + ":" + targetPort },
+      });
+      cReq.once("connect", function (cRes, tunnel) {
+        if (!cRes.statusCode || cRes.statusCode !== 200) {
+          tunnel.destroy();
+          cb(new Error("代理 CONNECT 失败: " + (cRes.statusCode || "?")));
+          return;
+        }
+        cb(null, tunnel);
+      });
+      cReq.once("error", function (err) { cb(err); });
+      cReq.end();
+    });
+    socket.once("error", function (err) { cb(err); });
+  };
+  return agent;
 }
 
 class AbortError extends Error {

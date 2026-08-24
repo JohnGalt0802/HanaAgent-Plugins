@@ -52,9 +52,24 @@ export async function execute(input, toolCtx) {
 
   let saveDir = "";
   if (input?.saveDir && String(input.saveDir).trim()) {
+    // Agent 显式指定目录：优先（Agent 自选模式的核心路径）
     saveDir = path.resolve(String(input.saveDir).trim());
   } else {
-    try { saveDir = String(toolCtx.config?.get?.("defaultSaveDir") || "").trim(); } catch { saveDir = ""; }
+    // 读取插件设置 config.json：defaultSaveDir（默认目录）/ agentChooses（Agent 自选）
+    let cfg = null;
+    try {
+      const cfgPath = path.join(toolCtx.dataDir, "config.json");
+      if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    } catch { cfg = null; }
+    const defaultDir = cfg?.defaultSaveDir && String(cfg.defaultSaveDir).trim() ? String(cfg.defaultSaveDir).trim() : "";
+    const agentChooses = cfg?.agentChooses === true;
+    if (defaultDir && !agentChooses) {
+      // 已设默认目录且非 Agent 自选：统一落默认目录
+      saveDir = path.resolve(defaultDir);
+    } else if (!defaultDir || agentChooses) {
+      // 无默认目录或 Agent 自选：回退插件配置系统 defaultSaveDir（兼容旧配置），再回退插件数据目录
+      try { saveDir = String(toolCtx.config?.get?.("defaultSaveDir") || "").trim(); } catch { saveDir = ""; }
+    }
   }
 
   // 准备态：卡片先渲染，延迟后自动从 0% 开始
@@ -73,13 +88,13 @@ export async function execute(input, toolCtx) {
   const snap = manager.snapshot(task.taskId);
 
   return {
-    content: [{ type: "text", text: `已开始下载 ${snap.fileName}（后台流式下载，卡片实时显示进度）。` }],
+    content: [{ type: "text", text: `已开始下载 ${snap.fileName}（任务ID：${snap.taskId}）。后台流式下载，卡片实时显示进度；无需立即回查——需要等待结果时再调用 download-wait 并传入此任务 ID。` }],
     details: {
       card: {
+        type: "webview", // PLUGINS.md L349 新协议必需；缺则卡片回退到 WebView ... Chalkboard 占位壳
         route: `/card/download?taskId=${snap.taskId}`,
         title: `下载 ${snap.fileName}`,
         description: `正在准备下载 ${snap.fileName}`,
-        aspectRatio: "8:1", // 初始高度 ≈ 50px，配合 ui.resize 自适应
       },
     },
   };

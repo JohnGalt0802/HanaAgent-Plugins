@@ -5,6 +5,37 @@
 (function () {
   "use strict";
 
+  // 主题明暗判定：data-hana-theme（宿主传的静态值）优先，缺失时 prefers-color-scheme 兜底
+  var __th = (document.body && document.body.getAttribute("data-hana-theme")) || "";
+  var __dark = /dark|midnight|contrast|深/i.test(__th);
+  if (!__dark && (!__th || __th === "inherit")) {
+    __dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  if (__dark) document.body.classList.add("t-dark");
+  // 主题变化监听：宿主未传静态主题时，跟随系统配色变化动态切换
+  if (window.matchMedia) {
+    try {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function (ev) {
+        var th2 = (document.body && document.body.getAttribute("data-hana-theme")) || "";
+        if (/dark|midnight|contrast|深/i.test(th2)) { document.body.classList.add("t-dark"); return; }
+        if (th2 && th2 !== "inherit") return;
+        document.body.classList.toggle("t-dark", ev.matches);
+      });
+    } catch (e) { /* 忽略 */ }
+  }
+
+  // 宿主主题切换监听：theme.js 广播 hana.theme.changed 到所有插件 iframe
+  // 更新 data-hana-theme + t-dark（颜色由 CSS 变量 t-dark 切换自动跟随）
+  window.addEventListener("message", function (ev) {
+    var md = ev.data;
+    if (!md || md.type !== "hana.theme.changed") return;
+    var th = md.theme || "";
+    if (!th) return;
+    document.body.setAttribute("data-hana-theme", th);
+    var dark = /dark|midnight|contrast|深/i.test(th);
+    document.body.classList.toggle("t-dark", dark);
+  });
+
   var root = document.getElementById("dl-root");
   var API = window.__API || "";
   var pageParams = new URLSearchParams(location.search);
@@ -61,15 +92,38 @@
   // ── 内容高度自适应：报告给宿主，iframe 贴合内容高度（避免“浏览器窗口”感）──
   function reportSize() {
     try {
-      // 注意：documentElement.scrollHeight 在内容不足时等于视口高度（Chrome 行为），
-      // 必须用 body.scrollHeight 才是真实内容高度
-      var h = Math.ceil(document.body ? document.body.scrollHeight : 0);
+      // 必须用卡片本体 .dl 的 offsetHeight（而非 body.scrollHeight）：
+      // 宿主 iframe 可能给 body/html 注入 height:100%，使 body.scrollHeight 等于 iframe 高度（600），
+      // 导致 reportSize 报 600 → 宿主设 600 → 卡片下方大空白（截图实锤）。
+      // .dl 是卡片本体，offsetHeight 是内容实际高度，任何容器 height:100% 都拉不垮它（实测免疫）。
+      // 但 .dl.offsetHeight 不含 body 的上下 padding，需补上（body 有 padding 8px 12px）。
+      var rootEl = root || document.getElementById("dl-root");
+      var dlEl = document.querySelector(".dl");
+      var bodyEl = document.body;
+      var pad = 0;
+      if (bodyEl) {
+        var cs = window.getComputedStyle ? window.getComputedStyle(bodyEl) : null;
+        if (cs) pad = (parseInt(cs.paddingTop, 10) || 0) + (parseInt(cs.paddingBottom, 10) || 0);
+      }
+      var base = dlEl ? dlEl.offsetHeight : (rootEl ? rootEl.scrollHeight : 0);
+      var h = Math.ceil(base + pad);
       if (!h || h < 50) h = 50;
+      // 高度完全内容驱动（宿主 Bn 对聊天卡片上限 600），不设插件侧上限
       PARENT.postMessage(
         { protocol: "hana.plugin.ui", version: 1, kind: "event", type: "ui.resize", payload: { width: 400, height: h } },
         HOST_ORIGIN
       );
     } catch (e) { /* 忽略 */ }
+  }
+
+  // 用 ResizeObserver 监听内容容器 #dl-root（展开/收起/进度变化立即报高）。
+  // 不监听 body：宿主 iframe 高度变化会让 body 尺寸变化（height:100%），导致循环报错。
+  var _ro = null;
+  if (typeof ResizeObserver !== "undefined") {
+    try {
+      _ro = new ResizeObserver(function () { reportSize(); });
+      _ro.observe(root || document.getElementById("dl-root"));
+    } catch (e) { _ro = null; }
   }
 
   // ── 状态机 ──
@@ -107,17 +161,27 @@
   }
 
   function openFile(p) {
-    // 默认 mode：系统默认程序打开文件本体
-    hostRequest("resource.open", { resource: { kind: "local-file", path: p } })
-      .then(function (r) { if (!r || !r.opened) renderHint("无法打开，可尝试复制路径"); })
-      .catch(function () { renderHint("无法打开，可尝试复制路径"); });
+    if (!p) { renderHint("没有可打开的文件路径"); return; }
+    // 服务端 explorer 用默认程序打开（聊天流宿主上下文 resource.open 能力不可靠）
+    apiFetch("/download/reveal", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: p, mode: "open" }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && !d.ok) renderHint(d.error || "打开失败"); })
+      .catch(function () { renderHint("打开失败：网络错误"); });
   }
 
   function openFolder(p) {
-    // reveal：在文件管理器中显示文件（Windows 下即打开所在文件夹并选中）
-    hostRequest("resource.open", { resource: { kind: "local-file", path: p }, mode: "reveal" })
-      .then(function (r) { if (!r || !r.opened) renderHint("无法打开文件夹"); })
-      .catch(function () { renderHint("无法打开文件夹"); });
+    if (!p) { renderHint("没有可打开的文件路径"); return; }
+    // 服务端 explorer /select 定位并打开所在文件夹（绕过宿主 platform 限制）
+    apiFetch("/download/reveal", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: p }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && !d.ok) renderHint(d.error || "打开文件夹失败"); })
+      .catch(function () { renderHint("打开文件夹失败：网络错误"); });
   }
 
   function copyPath(p) {
@@ -277,12 +341,8 @@
     }
     html += "</div>";
 
-    if (state === "done") {
-      html += '<div class="dl-hint">' + esc(filePath) + "</div>";
-    } else if (state === "failed" || state === "interrupted") {
+    if (state === "failed" || state === "interrupted") {
       html += '<div class="dl-error">' + esc(t.error || "下载失败") + "</div>";
-    } else if (state === "canceled") {
-      html += '<div class="dl-hint">已取消' + (t.error && t.error !== "已取消" ? "：" + esc(t.error) : "") + "</div>";
     }
     html += "</div>";
 

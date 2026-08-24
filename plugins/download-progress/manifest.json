@@ -1,19 +1,38 @@
 {
   "manifestVersion": 1,
   "id": "download-progress",
-  "name": "下载进度条",
-  "version": "1.6.1",
-  "description": "Agent 下载文件时，在操作块下方显示实时进度条卡片：百分比、文件总大小、下载速度、已完成量。下载完成后可直接打开文件或复制路径。",
-  "author": "大花",
+  "name": "Hana Download Manager",
+  "version": "0.4.0",
+  "description": "跨会话下载管理器：聊天内嵌实时进度卡片 + 右侧统一管理页（全部 Agent 会话的下载任务）。",
+  "author": "John Galt",
   "minAppVersion": "0.158.0",
   "trust": "full-access",
   "ui": {
     "hostCapabilities": [
       "resource.open",
+      "resource.pick",
       "clipboard.writeText"
     ]
   },
   "contributes": {
+    "cards": [
+      {
+        "id": "download",
+        "type": "webview",
+        "title": "下载进度",
+        "description": "下载任务实时进度：百分比、速度、已完成量",
+        "route": "/card/download",
+        "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M12 3v12m0 0l-4-4m4 4l4-4\"/><path d=\"M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2\"/></svg>"
+      },
+      {
+        "id": "manager",
+        "type": "webview",
+        "title": "下载管理器",
+        "description": "跨会话统一管理 Agent 的所有下载任务",
+        "route": "/manager",
+        "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M8 9h8M8 13h5M8 17h3\"/></svg>"
+      }
+    ],
     "configuration": {
       "title": "下载进度条设置",
       "properties": {
@@ -27,11 +46,11 @@
           "type": "string",
           "enum": [
             "auto",
-            "manual"
+            "self"
           ],
           "default": "auto",
           "title": "回查模式",
-          "description": "download-wait 默认等待策略：auto=按文件总大小自动估算等待阈值（本地计算，不费模型算力）；manual=使用下方手动默认阈值。Agent 显式传 mode 参数时以参数为准。"
+          "description": "download-wait 的回查模式：auto=自动回查（默认，推荐）——脚本推算观察窗与建议回查节奏（suggestNextWaitMs），Agent 按建议走，调用次数最少；self=Agent 自觉回查——回查时机与等待时长全由 Agent 自主决定（不传 timeoutMs 则查一次立即返回），会显著增加 Agent 工具调用、稀释注意力并占用上下文，除非必须由 Agent 自主判断否则不建议使用。Agent 显式传 mode 参数时以参数为准。"
         },
         "manualTimeoutMs": {
           "type": "number",
@@ -43,7 +62,7 @@
           "type": "number",
           "default": 30000,
           "title": "停滞判定阈值（毫秒）",
-          "description": "下载任务无新数据超过该时长判定为停滞，并后台通知 Agent 决策。"
+          "description": "下载任务无新数据超过该时长判定为停滞（卡片 stalled 徽标 + wait 返回 stalled=true）。"
         }
       }
     }

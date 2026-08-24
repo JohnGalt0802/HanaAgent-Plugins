@@ -1,209 +1,199 @@
-# 下载进度条插件（download-progress）
+# Hana Download Manager
 
-Agent 执行下载任务时，在操作块下方显示**实时进度条卡片**：
+> 插件 ID：`download-progress` · 为 HanaAgent 提供**可观测下载**（observable download）能力：
+> 下载任务实时可视化、进度状态可查询、中途可干预、终态双通道守望。
+> 同时提供命令型下载（git clone / pnpm install）与跨会话下载管理器。
 
-- 百分比进度条
-- 文件总大小 / 已完成量
-- 实时下载速度（滑动窗口测速）
-- 剩余时间估算（ETA）
-- 取消下载按钮
-- 完成后：打开文件 / 打开所在文件夹 / 复制路径
-- 左侧折叠按钮：`❯` 展开/收起本条详情，`□` 展开/收起所有下载卡片
-- 停滞检测：连接无新数据超过阈值（默认 30s，可配置 stallTimeoutMs）判定停滞，卡片标记 stalled 徽标并**实时提醒 Agent 决策**（不自动取消）
-- 失败实时提醒：下载失败时尝试立即注入会话（session:send，Agent 空闲即达；回合活跃则放弃不排队），Agent 自主决策重试/换源
+- 当前版本：v0.4.0
+- 权限要求：full-access
+- 运行环境：HanaAgent ≥ 0.158.0
 
 ---
 
-## 为什么做这个插件（背景与动机）
+## 一、背景与动机
 
-日常任务里大量动作需要**下载文件**，而下载对象的大小千差万别：
-从几 KB 的配置文件，到几十上百 MB 的安装包、数据集、模型文件。
+日常任务中大量动作依赖下载，对象从几 KB 的配置文件到数百 MB 的安装包、模型文件不等。在引入本插件之前，Agent 的下载是典型的**无头下载**（headless download）：将 URL 交给 curl / Invoke-WebRequest 后干等进程结束。该模式存在四个结构性缺陷：
 
-在引入本插件之前，Agent 下载文件是典型的**无头下载**（headless / 盲下载）：
-把 URL 丢给 curl / Invoke-WebRequest 之类的命令，然后干等进程结束。
+1. **进度不可知**：无法区分"进行中"与"已卡死"，二者在外部观察上完全一致。
+2. **决策靠猜测**：缺乏真实进度，Agent 只能按文件大小与耗时估算，正确性全凭运气。
+3. **小文件慢速 → 硬等**：几百 KB 的文件在网络不佳时也可能耗时数分钟，Agent 无反馈可用。
+4. **大文件超时 → 杀进程重来**：超过等待阈值即杀进程，此时文件往往已部分落盘，只能加大阈值从头再来，浪费流量与时间。
 
-这种模式有四个致命问题：
+结论：下载必须**有头**——进度可见、状态可查、中途可干预，Agent 才能基于事实做出正确决策。
 
-1. **完全无法判断下载走到哪一步**。不知道是刚开始、进行中、还是已经卡死。
-   一个"正在下载"的进程和一个"卡住不动"的进程，从外面看起来完全一样。
+## 二、核心架构
 
-2. **Agent 只能靠猜**。没有进度信息，Agent 只能根据文件大小和已耗时去估算，
-   猜得对不对全凭运气。
+插件分为三层，各层职责单一、通过明确契约衔接：
 
-3. **小文件下载慢 → Agent 硬等**。有些文件明明很小（几百 KB），
-   但网络慢的时候下载要几分钟，Agent 没有反馈，只能傻等，
-   甚至误判为卡死。
+```
+┌─────────────────────────────────────────────────────┐
+│  展示层                                              │
+│  ├─ 进度卡片（聊天流内嵌 webview，600ms 轮询刷新）    │
+│  └─ 跨会话管理器（/manager，集中管控全部会话的任务）   │
+├─────────────────────────────────────────────────────┤
+│  工具层（LLM 消费的四个工具）                         │
+│  ├─ download-file     URL 下载（返回卡片 + taskId）   │
+│  ├─ download-command  命令型下载（git clone/pnpm）    │
+│  ├─ download-wait     回查守望（节拍器 + 双通道触发）  │
+│  └─ download-cancel   取消（来源签名 user/agent）     │
+├─────────────────────────────────────────────────────┤
+│  数据层（lib/dlcore.js 任务管理器）                    │
+│  流式下载 · 测速 · 限速 · 停滞监测 · 终态事件 · 持久化  │
+└─────────────────────────────────────────────────────┘
+```
 
-4. **大文件超过阈值 → Agent 杀进程，重来一遍，还加阈值**。
-   这是最折腾的场景：文件大、耗时长，超过了 Agent 设定的等待阈值，
-   Agent 就把进程杀掉，结果发现**文件已经下载了一部分**，
-   只能重新下载，把时间阈值调大再来一次。反反复复，效率极低，
-   还白白浪费了已经下载的流量和时间。
+**层间契约**：
 
-**结论**：下载必须**有头**——进度实时可见、状态随时可查、中途可干预，
-Agent 才能根据真实进度做出正确决策（继续等、限速、取消、重试），
-而不是在黑箱里盲猜。
+- 工具层 → 展示层：工具返回值携带 `details.card`（webview 卡片描述），宿主将其渲染在工具块正下方；卡片前端以 600ms 周期轮询 `/download/status` 刷新。
+- 数据层 → 工具层：`onceFinal(taskId)` 提供终态一次性等待原语；`onFinal/onStall` 回调驱动通知分流。
+- 工具层 → 宿主：`deferred:register/resolve` 总线通道承载跨回合投递（详见第四节）。
 
-## 解决方案：把下载包装成"有头下载"工具
+## 三、长任务守望机制（本插件的核心设计）
 
-本插件把下载动作包装为一个标准工具 `download-file`，核心思路：
+下载的生命周期常常跨越 Agent 的回合边界，因此守望机制按「Agent 是否在场」分为两条独立通道，切换点是 Agent 的显式决策而非隐式超时：
 
-1. **强制走工具**：全局规则约定所有 Agent 下载一律调用 `download-file`
-   （替代 curl / Invoke-WebRequest 裸下载），从机制上杜绝盲下载。
-2. **进度实时可视化**：工具启动后台流式下载，立即在聊天流操作块下方
-   渲染进度卡片（百分比 / 大小 / 速度 / ETA），每 600ms 刷新一次，
-   下载到哪一步一目了然，是否卡死一眼可判。
-3. **中途可干预**：随时取消；下载完成直接打开文件或复制路径。
-4. **不再折腾阈值**：Agent 看到真实进度后，可以按需限速（speedLimit）、
-   判断剩余时间、决定等待还是放弃，不再"杀掉重来加阈值"。
-5. **进程重启不丢状态**：任务状态持久化，应用重启后遗留任务标记为
-   中断（interrupted），不留下僵尸进程和半成品误导。
+### 3.1 回合内：onceFinal 即时唤醒
 
-> 注：英文里 headless 指"无界面/无头"，相对地"有头"即 headed / 带界面的下载；
-> 在 Agent 场景下更准确的说法是**可观测下载**（observable download）或
-> **带状态反馈的下载**（progress-aware download）。
+Agent 调用 `download-wait` 后，等待循环与数据层的终态事件做竞速（`Promise.race`）。任何终态到达——包括用户在卡片上手动取消——wait **立即返回**，不等待轮询间隔，等效于剩余等待时间归零。
 
----
+### 3.2 回合外：notifyWhenDone + deferred 投递
 
-## 使用方式
+Agent 决定结束回合而下载未完成时，调用 `download-wait(taskId, notifyWhenDone=true)`：
 
-Agent 需要下载文件时，优先调用 `download-file` 工具（而不是 `exec_command` 里的 curl / Invoke-WebRequest），
-工具启动后台流式下载并立即返回进度卡片，卡片渲染在工具操作块正下方，实时刷新。
+1. 工具立即返回当前快照（等待时间清零），并注册 deferred 占位（终态 + 停滞双占位）；
+2. Agent 正常结束回合，会话资源不被挂起；
+3. 终态到达时宿主投递 `hana-background-result`（含文件路径、原因、取消来源），在下一回合边界唤醒 Agent 继续处理。
 
-参数：
+### 3.3 分流原则
+
+| 场景 | 行为 |
+|------|------|
+| 回合内完成/取消 | onceFinal 清零唤醒 wait；无占位注册 |
+| 回合内正常推进 | wait 按节拍器节奏返回，Agent 决定续期或离场 |
+| 已下载完才调用 notifyWhenDone | 静默收束，不注册不投递 |
+| 离场后终态到达 | deferred 投递唤醒，消息含完整上下文 |
+
+### 3.4 取消来源溯源
+
+每次取消均记录 `canceledBy` 来源：卡片按钮 = `user`，Agent 工具 = `agent`。该标注贯穿快照、wait 返回值与 deferred 投递消息；用户手动取消的通知附有「非故障，无需自动重试或换源」提示，防止 Agent 将人为干预误判为故障并自作主张重试。
+
+## 四、守望循环（wait 的健康续窗策略，v0.4.0）
+
+`download-wait` 默认 auto 模式下，脚本全程守望：**下载健康则持续等待直到终态，期间零打扰、零额外调用**；只有异常才提前返回交 Agent 决策。
+
+- 终态（done / failed / canceled / interrupted）→ 正常返回；onceFinal 事件使取消与完成瞬间穿透等待循环；
+- 停滞 → 后端 stalled 标记或本地 20s 无进展，立即返回；
+- **双窗降速警报**：以 10s 为检测窗（首窗 5s 仅建立 EMA 基线，豁免慢启动），连续两个窗口均速跌破常态基线（EMA）的 30% → 携带诊断包（当前速度 / 基线 / 比值 / ETA）提前返回，由 Agent 决策换源、接受慢速或取消；
+- 显式 `timeoutMs` 仅作总等待硬上限（安全阀，默认 30 分钟）；
+- `suggestNextWaitMs` 已退役——判断「是否需要回查」是脚本的职责，不再外包给 Agent 循环调用。
+
+速度估算优先使用同域名历史速度缓存（10 域名 × 3 样本加权，最新实测权重最高）；守望结束将实测速度写回缓存，形成自校正闭环。
+
+## 五、功能清单
+
+### 5.1 下载工具 download-file
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
 | `url` | 是 | 下载地址（http/https） |
 | `saveDir` | 否 | 保存目录绝对路径；留空用插件默认目录 |
 | `fileName` | 否 | 自定义文件名；留空从 URL 推断 |
-| `speedLimit` | 否 | 限速（字节/秒），大文件避免占满带宽 |
-| `startDelayMs` | 否 | 准备态延迟（毫秒），默认 0 立即开始；卡片渲染晚于下载也无妨，完成后照常显示 100% |
-| `stallTimeoutMs` | 否 | 停滞判定阈值（毫秒，默认 30000），连接无新数据超此时长标记停滞并后台通知 |
+| `speedLimit` | 否 | 限速（字节/秒） |
+| `startDelayMs` | 否 | 准备态延迟（毫秒），默认 0 |
 
-配套工具 `download-cancel`：
+返回文本自足：包含任务 ID 与免回查引导，Agent 单次调用即可获得全部后续所需信息。网络策略：代理优先（CONNECT 隧道，读系统代理），失败自动降级直连；支持标准 3xx 重定向与 npmmirror 式文本重定向。完整性红线：chunked（无 Content-Length）传输半途断连一律判 failed 并删除半成品——宁可重来不留坏文件。
 
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `taskId` | 是 | download-file 返回的任务 ID |
+### 5.2 命令型下载 download-command
 
-取消后任务状态变为 canceled、半成品文件删除。典型场景：收到停滞通知后决策取消、速度长期不达标、换源重下。
+`git-clone` 与 `pnpm-install` 白名单命令（不做 shell 拼接），解析输出流映射为阶段文案与百分比；Windows 下以 taskkill 杀进程树取消（pnpm 半成品 node_modules 保留，git clone 半成品目录删除）。
 
-## 配套工具 download-wait（Agent 回查进度）
-
-`download-file` 是立即返回的（卡片先渲染、下载在后台跑），Agent 需要主动回查进度：
+### 5.3 回查工具 download-wait
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| `taskId` | 是 | download-file 返回的任务 ID |
-| `mode` | 否 | auto=按文件大小自动估算等待阈值（默认）；manual=用 timeoutMs 手动阈值 |
-| `timeoutMs` | 否 | 手动等待毫秒数（manual 模式使用；auto 模式下作为估算阈值的上限） |
+| `taskId` | 是 | 任务 ID |
+| `mode` | 否 | auto（默认，脚本节拍器）/ self（Agent 自觉回查，慎用） |
+| `timeoutMs` | 否 | auto 下作硬上限；self 下为等待时长（不传则即时快照） |
+| `notifyWhenDone` | 否 | 结束回合前的大文件专用，语义见第三节 |
 
-返回完整状态快照（state / total / received / percent / speed / eta / error / filePath / stalled / thresholdUsed），
-Agent 据此决策：进度/速度正常→继续等；`stalled=true`（进度 20s 无进展，疑似卡死）或速度归零→取消/换源；
-ETA 超预期→换源；完成→直接使用文件；失败→按错误决定重试/换源。
+返回快照含 state / percent / speed / eta / error / filePath / stalled / suggestNextWaitMs / canceledBy / userCanceled / notifyRegistered。
 
-**auto 模式（默认）**：工具内部先拿文件总大小，按分档本地估算等待阈值（≤10MB→60s、≤100MB→300s、
-≤500MB→15min、≤2GB→30min、更大→60min），Agent 只需 `download-wait(taskId)` 一步，无需自己算。
-**manual 模式**：用 `timeoutMs`（未传则用插件设置 `manualTimeoutMs`），适合有明确预期的场景。
+### 5.4 取消工具 download-cancel
 
-**推荐流程**：
-1. `download-file` 启动下载
-2. `download-wait(taskId)`（auto 自动估算阈值），到点/完成后按快照决策
-3. **未完成且决定继续 → 立即再调 download-wait 跟进**（续接铁律），直到 done/failed/放弃；无排队通知，实时状态一律以 wait 回查为准
+终止指定任务（来源签名为 agent），删除半成品文件。
 
-**通知策略（无排队通知，全实时）**：
-- `download-wait` 主动轮询是唯一实时主路径（秒级，失败/完成/停滞立即返回）
-- 失败/停滞的被动提醒：尝试 `session:send` 立即注入（Agent 空闲即达）；宿主拒绝（session_busy，回合活跃）则放弃，不排队
-- 成功不通知（wait 查即可）；无 deferred 回合边界排队通知
+### 5.5 跨会话管理器
 
-## 配套工具 download-command（命令型下载：git clone / pnpm install）
+`/manager` 页面集中展示所有会话的下载任务：列表、筛选（全部/在途/已完成/失败）、搜索、行内详情、打开文件/所在文件夹、默认下载目录设置。列表内部滚动，样式自包含浅/深双色板并跟随宿主主题广播切换。
 
-Agent 需要克隆仓库或安装依赖（体感上是“下载行为”）时，可调用 `download-command`，
-在聊天流显示实时进度卡片，后台 spawn 命令并解析输出刷新进度。命令白名单，不做 shell 拼接。
+## 六、设置项
 
-| 参数 | 必填 | 说明 |
+| 设置 | 默认 | 说明 |
 |------|------|------|
-| `kind` | 是 | `git-clone` 或 `pnpm-install` |
-| `repo` | git-clone 必填 | 仓库地址（http/https/git@/本地路径） |
-| `targetDir` | 否 | 目标目录绝对路径（git-clone 专用，默认取仓库名；已存在则报错不覆盖） |
-| `workdir` | install 必填 | 执行工作目录（git-clone 可选，默认当前目录） |
-| `label` | 否 | 卡片显示名 |
+| `defaultSaveDir` | 空 | 默认保存目录，留空用插件数据目录 downloads/ |
+| `waitMode` | auto | wait 回查模式（auto/self） |
+| `manualTimeoutMs` | 60000 | self 模式兜底阈值 |
+| `stallTimeoutMs` | 30000 | 停滞判定阈值（毫秒） |
 
-进度解析：git clone 的 stderr（Enumerating/Receiving objects/Resolving deltas/Updating files）与
-pnpm install 的 stdout（Packages:/Progress:/postinstall/Done in）→ 阶段（stage）+ 进度百分比。
-卡片 sizeText 按单位显示（对象/文件/包），运行中 meta 显示阶段文案，完成态显示「打开文件夹 + 复制路径」。
-取消：Windows 用 taskkill /pid X /T /F 杀进程树（pnpm 半成品 node_modules 保留、git clone 半成品目录删）。
-
-## 设置
-
-插件设置：
-- `defaultSaveDir`：默认保存目录（绝对路径），留空则保存到 `插件数据目录/downloads/`
-- `waitMode`：download-wait 默认回查模式（auto / manual）
-- `manualTimeoutMs`：manual 模式默认阈值（毫秒）
-
-## 结构
+## 七、项目结构
 
 ```
-manifest.json         插件声明（full-access）
-index.js              onload：恢复遗留任务 + 注册终态回调（deferred 通知 Agent）
-lib/dlcore.js         下载任务管理器（流式下载 / 测速 / 取消 / 限速 / 持久化 / 终态回调 / 历史速度缓存）
-tools/download-file.js 下载工具（返回进度卡片，注册 deferred 占位，失败时后端提醒）
-tools/download-command.js 命令型下载工具（git clone / pnpm install，返回进度卡片，解析输出实时刷新）
-tools/download-wait.js 等待/回查工具（轮询状态，返回进度快照供 Agent 决策）
-tools/download-cancel.js 取消工具（Agent 侧主动终止任务，删除半成品）
-routes/download.js    /card/download 卡片页 + /download/status + /download/cancel + /download/prepare
-app/card.css          进度条卡片样式（两行紧凑布局，跟随 Hana 深浅主题）
-app/card.js           卡片前端（轮询进度，折叠交互，mini host SDK 调 resource.open / clipboard）
+manifest.json             插件声明（full-access）
+index.js                  生命周期：遗留任务恢复 + onFinal/onStall → deferred 分流投递
+lib/dlcore.js             任务管理器：流式下载/测速/限速/停滞监测/onceFinal/canceledBy/持久化
+lib/progress-parsers.js   git/pnpm 输出解析（纯函数）
+tools/download-file.js    URL 下载工具
+tools/download-command.js 命令型下载工具
+tools/download-wait.js    回查守望工具（节拍器 + notifyWhenDone）
+tools/download-cancel.js  取消工具
+routes/download.js        卡片页/管理器页/status/list/cancel/prepare/reveal/settings 路由
+app/card.css|card.js      进度卡片前端（自包含色板、折叠交互、reportSize 报高）
+app/manager.css|manager.js 跨会话管理器前端
+extensions/enforce-download.js  下载约束注入扩展（预留，待宿主桥接 before_provider_request）
 ```
 
-## 实现要点
+## 八、实现要点
 
-- 进度卡片 = 工具返回值 `details.card`（webview/iframe 类型），宿主自动渲染在工具块下方
-- 下载在插件进程后台流式执行（Node 原生 fetch，不依赖第三方库）
-- 卡片每 600ms 轮询 `/download/status` 刷新进度；测速用 700ms 采样 + 3.5s 滑动窗口
-- 支持 `speedLimit` 限速参数（字节/秒），大文件可避免占满带宽
-- 无 Content-Length（chunked）时进度条切换为不定态动画，仍显示已完成量；
-  v1.5.2 起：下载完成后 total 以实际接收字节兑底（total=received），完成态强制满格 100%
-  （修复“完成但进度条半截”：终态脱离不确定态 + 数据层兑底 + restore 历史数据兑底）
-- 准备态机制（prepare + startDelayMs）：工具先返回卡片（渲染"准备中"），
-  延迟后自动启动下载，解决"卡片渲染时下载已完成（跳 100%）"的时序问题
-- 两行紧凑布局：第一行（图标 + 文件名 + 状态徽标 + 速度/剩余 + 按钮），
-  第二行（进度条 + 百分比 + 已下载/总大小），高度自适应贴合内容
-- 折叠交互：`❯` 旋转 90° 展开本条详情（文件/路径/大小/任务/状态），
-  `□` 旋转 45° 变菱形展开所有卡片，跨卡片联动用 BroadcastChannel（同源 iframe 通信）
-- 状态持久化到 `dataDir/tasks.json`，应用重启后遗留任务标记 interrupted
-- 下载完成/失败/取消会删除半成品文件（完成后保留）
-- 数据完整但流收尾报错（undici 在连接关闭边界的 terminated）时按成功处理，确保文件落盘
-- 完成通知：任务终态通过 deferred:resolve / deferred:fail 记录状态（成功 notify_ui_only 不打扰；失败 notifyAgentOnFailure 唤醒 Agent 处理）
-- 停滞通知：stalled 时注册独立占位（taskId:stall）+ resolve（trigger_parent_turn 唤醒 Agent，含进度与决策提示）
-- 样式遵循 Hana 设计语言：消费宿主注入的主题变量（--text/--accent/--green/--danger 等），暗色 UI 亮字、明亮 UI 暗字自动切换；正文 14px，小字 12px，百分比 14px
-- 卡片 iframe 内轮询自动携带 URL 里的 `token`（本地连接）与 `X-Hana-Plugin-Surface-Session`（远程连接），避免 403
+- **准备态时序**：任务先以 pending 占位创建并返回卡片，延迟后自动启动——保证卡片从"准备中→0%→100%"全程可见，避免"卡片渲染时已跳 100%"
+- **完整性红线**：仅当获得 Content-Length 且收满才判 done；chunked 断连判 failed 删半成品。此判定不可放宽——残缺文件误判完成比删文件更糟
+- **停滞监测**：每 5s 巡检，超阈值标记 stalled 并触发独立投递（不自动取消，决策权在 Agent）；进度恢复自动解除
+- **重启恢复**：任务持久化于 tasks.json（保留最近 100 条终态）；应用重启后遗留 running 统一标记 interrupted，不留僵尸任务
+- **测速**：700ms 采样 + 滑动窗口平均；卡片 600ms 轮询刷新
+- **鉴权**：卡片 iframe 自动携带 URL token（本地连接）或 X-Hana-Plugin-Surface-Session 头（远程连接）
+- **防缓存**：卡片与管理器路由 `Cache-Control: no-store`
+- **卡片高度限界**：两行布局高度钉死（信息行 24px / 进度行 14px）+ 锁定行高因子 + 四周 overflow 截断，杜绝渲染中间态瞬时拱高导致的滚动条跳动
+- **explorer 安全**：打开文件/文件夹走服务端路由（cmd /c + 引号 + `^` 转义特殊字符），路径白名单校验（仅任务记录内的文件/目录），消除命令注入面
 
-## 测试记录（2026-08-10）
+## 九、宿主适配补丁
 
-- 40MB 本地下载：478ms 完成，进度 0→100%，文件大小一致
-- 限速 2MB/s：进度 28.9%→51.1% 实时推进，速度采样 2.0~2.4MB/s 吻合
-- 取消：state=canceled，半成品文件删除
-- 404：state=failed，错误 "HTTP 404 File not found"
-- 卡片 UI：运行中（30% + ETA + 取消按钮）/ 完成（100% + 打开/复制）均渲染正确
-- 真实网络：three.js（9MB）、electron（110MB）、VS Code（227MB）下载全程进度正常
-- 新会话实测 details.card 链路：卡片在工具块正下方、准备中 → 0% → 100%、高度贴合
-- v1.1.0 折叠功能：❯ 展开/收起本条（箭头旋转 90°、详情区显示文件/路径/大小/任务）、
-  □ 旋转 45° 变菱形并展开所有卡片（BroadcastChannel 跨 iframe 联动实测生效）
-- v1.2.0：download-wait 回查工具（实测 15s 返回 33.9% + 930KB/s + ETA 29s，Agent 决策信息完备）；
-  deferred 完成通知（register/resolve 实测 ok，终态回调触发）；修复限速下载在连接关闭边界的
-  undici terminated 误判（数据完整按成功处理）；修复 lib 模块缓存导致 onload 拿旧实例的问题
-  （改名 + globalThis 版本化单例）；限速下载回归：4MB/40MB 均 done 且文件字节完整
-- v1.3.0：wait 双模式（auto 按大小分档自动估算阈值，本地计算不费模型算力 / manual 手动阈值，
-  可在插件设置中切换默认）；卡死预警（进度 20s 无进展提前返回 stalled=true，不等阈值到点）；
-  tasks.json 持久化只保留最近 100 条终态；实测：auto 模式 4MB 自动算 60s 阈值 7s 完成返回 done，
-  manual 模式 5s 阈值到点返回 92.2% + ETA 1s
-- v1.4.0：auto 阈值参考同域名历史下载速度缓存（实测 4MB 用 480KB/s 历史速度估算出 15s 阈值）；
-  卡片折叠详情区新增"预计 HH:MM 完成"；deferred 通知改 notify_ui_only（记录不唤醒，保持轻量）；
-  修复持久化清理把保留任务误删的 bug；模块缓存最终解法（lib 改名 dlcore.js + globalThis 版本化）
-- v1.5.0：停滞检测（30s 无新数据标记 stalled + download-stall 后台通知 Agent 决策，不自动取消；四并发实测互不干扰，停滞通知送达真实会话）
-- v1.5.1：download-cancel 工具（Agent 侧取消，实测 canceled + 半成品删除）；失败后端提醒（notifyAgentOnFailure 唤醒 Agent，404 实测通知送达含原因）；停滞触发即刷盘；wait 透出 stalledAt
-- v1.5.2：修复 chunked（无 Content-Length）下载“完成但进度条半截”渲染 bug。根因：GitHub codeload 动态打包 zip 返回 chunked 响应 → total=null → percent=null → 终态未脱离不确定态（CSS .dl-bar.indet 固定 40% 宽条纹）。修复：渲染层终态（done/failed/canceled/interrupted）强制脱离 indet、done 满条 100% + 数据层正常收尾路径 total=received 兑底 + restore 历史 done 任务兑底 + wait 卡死检测覆盖 chunked。红线：catch 分支 complete 判定勿放宽（残缺文件误判完成比删文件更糟）。验证：harness 5/5 + 四并发（3 带 CL + 1 chunked）全绿、字节零缺漏
-- v1.5.3：完成态新增“文件夹”按钮（resource.open + mode:reveal → showInFinder，打开所在文件夹并选中文件）；“打开”按钮改为系统默认程序打开文件（原为 reveal 定位，与新按钮语义重复）
-- v1.6.0：命令型下载任务（git clone / pnpm install）。新建 `lib/progress-parsers.js`（纯函数解析器，git 无状态 / pnpm 状态化防累加）、`tools/download-command.js`（白名单命令工具）；`lib/dlcore.js` MGR_VER 12、task 增 kind/cmd/unit/stage/child 字段、停滞监视器提取 `_startStallMonitor/_stopStallMonitor`、`_runCommand` 用 spawn 跑命令（数组传参、缓冲截断 4KB）、命令解析 `resolveCommandBin`（Windows 兼容：npm 全局装的 pnpm 是 .cmd shim，裸 spawn shell:false 执行不了（EINVAL），解析 `pnpm/bin/pnpm.mjs|cjs` 用 node 运行，保持无 shell 无注入面）、cancel 加 Windows taskkill /T /F 杀进程树、snapshot/_persist/restore 同步字段（restore 时 command 中断按 cmd.type 分支删/留半成品）；卡片按 unit 显示大小、运行中 meta 追加阶段文案、命令型完成态只给 打开文件夹+复制路径。验证：解析器单测 13/13、pnpm/git 真实全链路 done、四并发混合（2 pnpm + 1 git + 1 url chunked）4/4 done 互不干扰、进度可见性（git checkout 28%→100% 连续推进 / pnpm 阶段映射）、宿主重启后新会话工具注册可见、UI 卡片经用户确认进度条与完成态按钮正常。
+聊天流内嵌插件卡片与主题联动依赖对宿主 renderer 的手工补丁（Hana 升级会覆盖，需重打）：
+
+| 补丁 | 作用 |
+|------|------|
+| SendButton Fn 内嵌 iframe | 聊天流内 plugin_card 渲染真实内容而非占位壳 |
+| theme.js 主题广播 | 主题切换向全部插件 iframe 广播，页面实时换肤 |
+| 内嵌框高度自适应（ref 隔离 + 去抖） | 每个卡片仅响应自身 iframe 的高度消息（ref 匹配，杜绝多卡片高度联动）；90ms 去抖过滤瞬时异常报高 |
+
+自动化维护工具：`D:\HanakoWorks\_tools\hana-host-patches\apply-patches.mjs`（支持 --check 与幂等重打），台账见同目录 PATCHES.md。
+
+## 十、验证记录（摘要）
+
+- 四并发混合负载（URL ×3 含 chunked/限速 + git clone + pnpm install）互不干扰，字节零缺漏
+- 双通道守望四象限实证：回合内取消（onceFinal 即时弹起，6s 场景实测）、回合内完成（静默收束）、离场后完成（deferred 投递含 filePath）、离场后取消（投递含 canceledBy=user 与免重试提示）
+- 解析器单测 13/13；pnpm/git 真实全链路 done
+- 404/chunked/限速/代理降级/文本重定向均有专项用例
+
+## 十一、版本里程碑
+
+| 版本 | 要点 |
+|------|------|
+| v1.0–1.3 | 可观测下载基础：卡片、wait 双模式、卡死预警、历史速度缓存 |
+| v1.4–1.5 | 文件夹按钮、停滞检测、cancel 工具、chunked 完成态修复 |
+| v1.6.x | 命令型下载、停滞强化、实时注入、wait 节拍器（动态观察窗）、notifyWhenDone deferred 通知 |
+| v0.2.x | 跨会话管理器、主题跟随重建、高度内容驱动、服务端 explorer、安全加固 |
+| v0.3.x | canceledBy 来源标注、onceFinal 即时唤醒、卡片定宽、青夜字色、返回文本自足、双通道守望定形 |
+| v0.4.0 | wait 守望循环重构：健康续窗至终态、双窗降速警报（10s 检测窗/EMA 基线/首窗 5s 豁免）、suggestNextWaitMs 退役、loopback 代理豁免 |
+
+---
+
+*作者：John Galt · dahua · hanako*

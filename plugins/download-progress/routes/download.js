@@ -18,8 +18,52 @@ function readCardAssets() {
   };
 }
 
+// 下载管理器资源（跨会话任务列表页）
+function readManagerAssets() {
+  return {
+    css: fs.readFileSync(path.join(APP, "manager.css"), "utf-8"),
+    js: fs.readFileSync(path.join(APP, "manager.js"), "utf-8"),
+  };
+}
+
 export default function registerDownloadRoutes(app, ctx) {
   const base = "/api/plugins/" + ctx.pluginId;
+  // 任务管理器实例（globalThis 单例，dataDir 为实际任务存储位置：community 槽）
+  const taskMgr = getTaskManager(ctx.dataDir);
+
+  // ── 插件设置（默认下载目录等）与 tasks.json 同级存放（实际生效的 dataDir）──
+  const CONFIG_FILE = path.join(taskMgr.dataDir, "config.json");
+  function readSettings() {
+    try { return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) || {}; } catch { return {}; }
+  }
+  function writeSettings(s) {
+    fs.mkdirSync(ctx.dataDir, { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(s, null, 2), "utf-8");
+  }
+
+  // 读设置
+  app.get("/settings", (c) => {
+    try { return c.json({ ok: true, settings: readSettings() }); }
+    catch (e) { return c.json({ ok: false, error: e?.message || String(e) }, 500); }
+  });
+
+  // 写设置：defaultSaveDir 设置/清除默认下载目录；agentChooses 是否由 Agent 自选目录
+  app.post("/settings", async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const cur = readSettings();
+      if (body.defaultSaveDir !== undefined) {
+        const v = String(body.defaultSaveDir || "").trim();
+        if (v) { try { fs.mkdirSync(v, { recursive: true }); } catch { /* 目录不可创建也不阻塞 */ } }
+        cur.defaultSaveDir = v || null;
+      }
+      if (body.agentChooses !== undefined) {
+        cur.agentChooses = !!body.agentChooses;
+      }
+      writeSettings(cur);
+      return c.json({ ok: true, settings: cur });
+    } catch (e) { return c.json({ ok: false, error: e?.message || String(e) }, 500); }
+  });
 
   // 启动下载（HTTP 入口，供 Agent/外部直接调用，返回任务快照）
   app.post("/download/start", async (c) => {
@@ -77,23 +121,115 @@ export default function registerDownloadRoutes(app, ctx) {
     }
   });
 
+  // 全部任务列表（跨会话下载管理器）：在途优先，终态按结束时间倒序
+  app.get("/download/list", (c) => {
+    try {
+      const manager = getTaskManager(ctx.dataDir);
+      const tasks = manager.list();
+      return c.json({ ok: true, tasks });
+    } catch (e) {
+      return c.json({ ok: false, error: e?.message || String(e) }, 500);
+    }
+  });
+
   app.post("/download/cancel", (c) => {
     try {
       const taskId = String(c.req.query("taskId") || "");
       if (!taskId) return c.json({ ok: false, error: "缺少 taskId" }, 400);
       const manager = getTaskManager(ctx.dataDir);
-      const r = manager.cancel(taskId);
+      // 卡片按钮 = 用户手动操作，固定标记 canceledBy=user，供 Agent 区分取消来源
+      const r = manager.cancel(taskId, "user");
       return c.json(r.ok ? { ok: true } : { ok: false, error: r.error }, r.ok ? 200 : 409);
     } catch (e) {
       return c.json({ ok: false, error: e?.message || String(e) }, 500);
     }
   });
 
+  // 打开文件/所在文件夹（服务端 explorer.exe，绕过宿主 capability 的 platform 限制）
+  // mode=reveal（默认）：定位文件并打开所在文件夹；mode=open：用默认程序打开文件；目录路径直接打开
+  app.post("/download/reveal", async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const target = String(body.path || "").trim();
+      const mode = String(body.mode || "reveal") === "open" ? "open" : "reveal";
+      if (!target) return c.json({ ok: false, error: "缺少路径" }, 400);
+      // 安全校验：目标必须是任务记录中的文件路径或其所在目录
+      const manager = getTaskManager(ctx.dataDir);
+      const tasks = manager.list();
+      const knownFile = tasks.some((t) => t.filePath === target);
+      const knownDir = tasks.some((t) => t.filePath && path.dirname(t.filePath) === target);
+      if (!knownFile && !knownDir) return c.json({ ok: false, error: "路径不在下载记录中" }, 403);
+      const { execFile } = await import("node:child_process");
+      const { statSync } = await import("node:fs");
+      // 目标类型：目录任务（git-clone）的 filePath 本身是目录；下载任务的 filePath 是文件（不存在时按文件处理，开父目录）
+      let isDir = false;
+      try { isDir = statSync(target).isDirectory(); } catch { /* 文件不存在 → 按文件处理 */ }
+      // 语义：open=用默认程序打开目标本身；reveal=打开目标所在文件夹（目录则直接进入）
+      const openPath = mode === "open" ? target : (isDir ? target : path.dirname(target));
+      if (process.platform === "win32") {
+        // cmd /c + 双引号 + ^ 转义：
+        //  - 双引号整体包裹 → explorer 正确解析含空格路径（spawn 直传会被 explorer 自解析截断，exit 1）
+        //  - ^ 转义 & | ^ % < > " ! → 消除 cmd 命令分隔符注入面（引号内 & 虽不分隔，但防御异常路径）
+        //  - windowsVerbatimArguments: true → Node 不自动转义内嵌引号（默认会转成 \"，cmd 收到错乱引号导致 explorer 参数截断）
+        const esc = openPath.replace(/([&|^%<>"!])/g, "^$1");
+        execFile("cmd.exe", ["/c", 'explorer.exe "' + esc + '"'], { windowsHide: true, windowsVerbatimArguments: true }, (err) => {
+          if (err) console.error("[dl-reveal] explorer failed:", err);
+        });
+      } else {
+        // 非 Windows：平台默认打开器
+        const opener = process.platform === "darwin" ? "open" : "xdg-open";
+        execFile(opener, [openPath], { windowsHide: true }, (err) => {
+          if (err) console.error("[dl-reveal] opener failed:", err);
+        });
+      }
+      return c.json({ ok: true });
+    } catch (e) {
+      return c.json({ ok: false, error: e?.message || String(e) }, 500);
+    }
+  });
+
+  app.get("/manager", (c) => {
+    c.header("Cache-Control", "no-store");
+    const assets = readManagerAssets();
+    const hc = c.req.query("hana-css") || "";
+    const th = c.req.query("hana-theme") || "inherit";
+    const hcLink = hc ? `<link rel="stylesheet" href="${esc(hc)}">` : "";
+    return c.html(`<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>下载管理器</title>
+${hcLink}
+<style>${assets.css}<\/style>
+</head>
+<body data-hana-theme="${esc(th)}">
+<div id="dl-root"></div>
+<script>window.__API="${base}";<\/script>
+<script>${assets.js}<\/script>
+</body>
+</html>`);
+  });
+
   app.get("/card/download", (c) => {
+    c.header("Cache-Control", "no-store");
     const assets = readCardAssets();
     const hc = c.req.query("hana-css") || "";
     const th = c.req.query("hana-theme") || "inherit";
-    const taskId = String(c.req.query("taskId") || "");
+    let taskId = String(c.req.query("taskId") || "");
+    // Chalkboard 卡片用静态 route（无 taskId）打开：自动取最近任务（running/pending 优先，
+    // 无在途任务时取最新任务展示完成态）。这样卡片中心/Chalkboard 打开也能显示进度。
+    if (!taskId) {
+      try {
+        const manager = getTaskManager(ctx.dataDir);
+        const all = manager.tasks ? [...manager.tasks.values()] : [];
+        const active = all.filter((t) => t && (t.state === "running" || t.state === "pending"));
+        const pick = active.length > 0 ? active[0] : all[all.length - 1];
+        if (pick?.taskId) taskId = pick.taskId;
+      } catch (e) {
+        console.warn("[download] fallback task lookup failed:", e?.message || e);
+      }
+    }
     const hcLink = hc ? `<link rel="stylesheet" href="${esc(hc)}">` : "";
     return c.html(`<!DOCTYPE html>
 <html lang="zh">

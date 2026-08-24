@@ -83,25 +83,11 @@ export async function execute(input, toolCtx) {
     sessionPath: toolCtx.sessionPath,
   });
 
-  // 注册 deferred 占位：任务完成/失败时宿主记录状态（UI 记录，不触发 Agent turn）
-  try {
-    await toolCtx.bus.request("deferred:register", {
-      taskId: task.taskId,
-      sessionPath: toolCtx.sessionPath,
-      meta: {
-        type: "download",
-        label: task.fileName,
-        deliveryIntent: "notify_ui_only",
-        notifyAgentOnFailure: true,
-      },
-    });
-  } catch (e) { /* 注册失败不阻塞命令执行（卡片仍可用） */ }
-
   const snap = manager.snapshot(task.taskId);
   const action = kind === "git-clone" ? `克隆 ${cmd.args[0]}` : `安装 ${path.basename(resolveWd)} 依赖`;
 
   return {
-    content: [{ type: "text", text: `已开始${kind === "git-clone" ? "克隆" : "安装"}（后台执行命令，卡片实时显示进度）。` }],
+    content: [{ type: "text", text: `已开始${kind === "git-clone" ? "克隆" : "安装"}（任务ID：${snap.taskId}，后台执行命令，卡片实时显示进度）。` }],
     details: {
       card: {
         route: `/card/download?taskId=${snap.taskId}`,
