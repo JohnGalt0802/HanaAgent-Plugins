@@ -97,16 +97,25 @@ class TaskManager {
 
   // 终态一次性等待：终态到达（或已是终态）时立即 resolve。
   // 供 download-wait 实现「取消/完成即时唤醒」，不再等轮询间隔。
+  // 返回 { promise, cancel }：cancel 用于 wait 每轮循环退出时清理 waiter，防止无界累积。
   onceFinal(taskId) {
-    return new Promise((resolve) => {
-      if (!this._finalWaiters) this._finalWaiters = new Map();
+    let wrapped = null;
+    let set = null;
+    const promise = new Promise((resolve) => {
       const t = this.tasks.get(taskId);
       if (t && (t.state === "done" || t.state === "failed" || t.state === "canceled" || t.state === "interrupted")) { resolve(t); return; }
-      let set = this._finalWaiters.get(taskId);
+      if (!this._finalWaiters) this._finalWaiters = new Map();
+      set = this._finalWaiters.get(taskId);
       if (!set) { set = new Set(); this._finalWaiters.set(taskId, set); }
-      const wrapped = (task) => { set.delete(wrapped); resolve(task); };
+      wrapped = (task) => { set.delete(wrapped); resolve(task); };
       set.add(wrapped);
     });
+    return {
+      promise,
+      cancel() {
+        if (wrapped && set) { set.delete(wrapped); wrapped = null; }
+      },
+    };
   }
 
   _fireFinal(task) {
@@ -212,6 +221,9 @@ class TaskManager {
       cancelRequested: false,
       sessionId: sessionId || null,
       sessionRef: sessionRef || null,
+      consumedByWait: false, // wait 返回终态时置真：标识 Agent 已拿到结果（投递时供识别冗余）
+      waitActive: 0, // wait 正在守望的计数：onFinal 时 >0 说明 Agent 即将通过 wait 拿到结果
+      waitBudgetExhausted: false, // 守望预算已用尽：后续 wait 对该任务直接快照，禁止二次守望（杜绝回查循环）
       speedLimit: Number.isFinite(speedLimit) && speedLimit > 0 ? speedLimit : 0,
       controller: state === "pending" ? null : new AbortController(),
       pendingTimer: null,
@@ -490,9 +502,9 @@ class TaskManager {
       const text = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
       task._lastProgressAt = Date.now(); // 喂停滞监视器
       task._cmdBuf = appendBuf(task._cmdBuf, text); // 缓冲截断
-      const lines = text.split(/\r?\n/);
+      const lines = text.split(/[\r\n]+/); // \r 重绘（git/pnpm 进度刷新）也拆成独立行，parser 每行拿最新值
       for (const raw of lines) {
-        const line = raw.replace(/\r/g, "").trim();
+        const line = raw.trim();
         if (!line) continue;
         const r = parser(line);
         if (!r) continue;
@@ -602,9 +614,42 @@ class TaskManager {
       stage: t.stage || null,
       sessionId: t.sessionId || null,
       sessionPath: t.sessionPath || null,
+      consumedByWait: t.consumedByWait === true,
+      deferredRegistered: t.deferredRegistered === true,
+      waitActive: t.waitActive || 0,
+      waitBudgetExhausted: t.waitBudgetExhausted === true,
       saveDir: t.saveDir || null,
       speedLimit: t.speedLimit || 0,
     };
+  }
+
+  // wait 拿到终态后调用：标记 Agent 已消费结果（deferred 投递时 result.consumedByWait=true）
+  markConsumedByWait(taskId) {
+    const t = this.tasks.get(taskId);
+    if (t && !t.consumedByWait) {
+      t.consumedByWait = true;
+      this._persist();
+    }
+  }
+
+  // wait 进入/退出守望的计数：onFinal 判断 Agent 是否即将通过 wait 拿到结果（时序无关）
+  markWaitActive(taskId) {
+    const t = this.tasks.get(taskId);
+    if (t) t.waitActive = (t.waitActive || 0) + 1;
+  }
+
+  markWaitInactive(taskId) {
+    const t = this.tasks.get(taskId);
+    if (t && t.waitActive > 0) t.waitActive -= 1;
+  }
+
+  // 守望预算到点（未终态）后调用：标记该任务禁止二次守望，后续 wait 直接快照
+  markWaitBudgetExhausted(taskId) {
+    const t = this.tasks.get(taskId);
+    if (t && !t.waitBudgetExhausted) {
+      t.waitBudgetExhausted = true;
+      this._persist();
+    }
   }
 
   // ── 全部任务快照（跨会话下载管理器用）：在途优先，终态按结束时间倒序 ──
@@ -645,7 +690,8 @@ class TaskManager {
           speed: 0, startedAt: m.startedAt || now, finishedAt: now, elapsed: 0,
           error: isCmd ? "命令被中断（应用重启），请重新执行" : "下载被中断（应用重启），请重新发起下载",
           cancelRequested: false, speedLimit: m.speedLimit || 0,
-          sessionId: null, sessionRef: null, controller: null, pendingTimer: null, _samples: [],
+          sessionId: m.sessionId || null, sessionRef: null, controller: null, pendingTimer: null, _samples: [],
+          consumedByWait: m.consumedByWait === true, deferredRegistered: m.deferredRegistered === true,
           stalledAt: m.stalledAt || null, stallNotified: false, _lastProgressAt: now,
           kind: m.kind || "url", cmd: m.cmd || null, unit: m.unit || "bytes", child: null, stage: null,
         });
@@ -661,7 +707,8 @@ class TaskManager {
             state: m.state || "interrupted", total: hisTotal, received: m.received || 0,
             speed: 0, startedAt: m.startedAt || now, finishedAt: m.finishedAt || now,
             elapsed: m.elapsed || 0, error: m.error || null, cancelRequested: false, speedLimit: m.speedLimit || 0,
-            sessionId: null, sessionRef: null, controller: null, pendingTimer: null, _samples: [],
+            sessionId: m.sessionId || null, sessionRef: null, controller: null, pendingTimer: null, _samples: [],
+            consumedByWait: m.consumedByWait === true, deferredRegistered: m.deferredRegistered === true,
             stalledAt: m.stalledAt || null, stallNotified: false, _lastProgressAt: now,
             kind: m.kind || "url", cmd: m.cmd || null, unit: m.unit || "bytes", child: null, stage: null,
           });
@@ -700,6 +747,8 @@ class TaskManager {
           stalledAt: t.stalledAt || null,
           sessionId: t.sessionId || null,
           sessionPath: t.sessionPath || null,
+          consumedByWait: t.consumedByWait === true,
+          deferredRegistered: t.deferredRegistered === true,
         })),
       };
       fs.mkdirSync(this.dataDir, { recursive: true });
@@ -727,7 +776,7 @@ function appendBuf(buf, text) {
 //   解析到真实 JS 入口（pnpm/bin/pnpm.mjs|cjs）用当前 node 运行，保持无 shell、无注入面
 function resolveCommandBin(cmd) {
   const args = cmd.args || [];
-  if (cmd.type === "git-clone") return { bin: "git", args: ["clone", ...args] };
+  if (cmd.type === "git-clone") return { bin: "git", args: ["clone", "--progress", ...args] };
   // pnpm-install（及未知类型退化到 pnpm）
   const entry = findPnpmEntry();
   if (entry) return { bin: process.execPath, args: [entry, "install", ...args] };

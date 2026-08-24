@@ -3,7 +3,9 @@
 // 任务短暂延迟后自动开始，保证卡片从"准备中"→ 0% → 100% 全程可见。
 
 import path from "node:path";
+import fs from "node:fs";
 import { getTaskManager } from "../lib/dlcore.js";
+import { registerDeferred } from "../lib/deferred.js";
 
 export const name = "download-file";
 export const description =
@@ -86,6 +88,10 @@ export async function execute(input, toolCtx) {
   });
 
   const snap = manager.snapshot(task.taskId);
+
+  // 创建即注册 deferred 占位：下载完成后自动唤醒发起会话（不依赖 Agent 后续调 wait）
+  // await 注册完成再返回：消除「工具返回时占位还没建立」的竞态窗口
+  await registerDeferred(toolCtx.bus, task, { url });
 
   return {
     content: [{ type: "text", text: `已开始下载 ${snap.fileName}（任务ID：${snap.taskId}）。后台流式下载，卡片实时显示进度；无需立即回查——需要等待结果时再调用 download-wait 并传入此任务 ID。` }],

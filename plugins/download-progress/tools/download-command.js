@@ -6,6 +6,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { getTaskManager } from "../lib/dlcore.js";
+import { registerDeferred } from "../lib/deferred.js";
 
 export const name = "download-command";
 export const description =
@@ -84,6 +85,11 @@ export async function execute(input, toolCtx) {
   });
 
   const snap = manager.snapshot(task.taskId);
+
+  // 创建即注册 deferred 占位：命令完成后自动唤醒发起会话
+  // await 注册完成再返回：消除「工具返回时占位还没建立」的竞态窗口
+  await registerDeferred(toolCtx.bus, task, { kind: "command", cmdType: cmd.type });
+
   const action = kind === "git-clone" ? `克隆 ${cmd.args[0]}` : `安装 ${path.basename(resolveWd)} 依赖`;
 
   return {

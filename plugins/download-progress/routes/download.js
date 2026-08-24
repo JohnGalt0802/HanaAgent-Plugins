@@ -65,7 +65,8 @@ export default function registerDownloadRoutes(app, ctx) {
     } catch (e) { return c.json({ ok: false, error: e?.message || String(e) }, 500); }
   });
 
-  // 启动下载（HTTP 入口，供 Agent/外部直接调用，返回任务快照）
+  // 启动下载（HTTP 入口，UI/外部直接调用，返回任务快照）
+  // 注意：sessionId 硬编码 null，不注册 deferred 占位——UI 入口无唤醒语义，完成不投递
   app.post("/download/start", async (c) => {
     try {
       const body = await c.req.json().catch(() => ({}));
@@ -87,6 +88,7 @@ export default function registerDownloadRoutes(app, ctx) {
   });
 
   // 准备下载（pending）：生成任务占位并延迟自动启动，供卡片先渲染、进度从 0% 开始
+  // 注意：UI 入口，sessionId 为 null 不注册占位，无唤醒语义（Agent 工具入口 download-file 才注册）
   app.post("/download/prepare", async (c) => {
     try {
       const body = await c.req.json().catch(() => ({}));

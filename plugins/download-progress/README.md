@@ -4,7 +4,7 @@
 > 下载任务实时可视化、进度状态可查询、中途可干预、终态双通道守望。
 > 同时提供命令型下载（git clone / pnpm install）与跨会话下载管理器。
 
-- 当前版本：v0.4.0
+- 当前版本：v0.5.0
 - 权限要求：full-access
 - 运行环境：HanaAgent ≥ 0.158.0
 
@@ -34,7 +34,7 @@
 │  工具层（LLM 消费的四个工具）                         │
 │  ├─ download-file     URL 下载（返回卡片 + taskId）   │
 │  ├─ download-command  命令型下载（git clone/pnpm）    │
-│  ├─ download-wait     回查守望（节拍器 + 双通道触发）  │
+│  ├─ download-wait     回查守望（守望预算 + 异常检测，终态穿透）  │
 │  └─ download-cancel   取消（来源签名 user/agent）     │
 ├─────────────────────────────────────────────────────┤
 │  数据层（lib/dlcore.js 任务管理器）                    │
@@ -56,38 +56,59 @@
 
 Agent 调用 `download-wait` 后，等待循环与数据层的终态事件做竞速（`Promise.race`）。任何终态到达——包括用户在卡片上手动取消——wait **立即返回**，不等待轮询间隔，等效于剩余等待时间归零。
 
-### 3.2 回合外：notifyWhenDone + deferred 投递
+### 3.1 双通道完成通知（v0.5.2 定稿）
 
-Agent 决定结束回合而下载未完成时，调用 `download-wait(taskId, notifyWhenDone=true)`：
+下载完成有两种通知通道，分工不替代：
 
-1. 工具立即返回当前快照（等待时间清零），并注册 deferred 占位（终态 + 停滞双占位）；
-2. Agent 正常结束回合，会话资源不被挂起；
-3. 终态到达时宿主投递 `hana-background-result`（含文件路径、原因、取消来源），在下一回合边界唤醒 Agent 继续处理。
+- **同步通道（wait 守望）**：agent 回合内调 `download-wait` 守望，下载完成时在同一回合返回结果，
+  agent 无需收束即可继续。守望期间 agent 可**并行执行其他工具**（并行语义）——下载后台推进，
+  其他工具正常执行，wait 返回时拿全结果。
+- **异步通道（deferred 投递）**：agent 收束后，下载完成由宿主投递 `hana-background-result` 自动唤醒
+  发起会话。占位在 `download-file`/`download-command` 创建任务时**自动注册**，不依赖 Agent 任何操作。
 
-### 3.3 分流原则
+选型原则：agent 回合内且仍有正事可做 → 用 wait（并行守望）；准备收束 → 直接收束，deferred 接管。
+守望预算 90 秒：健康下载超过预算返回未完成快照，此时应收束（deferred 接管）；同一任务守望预算
+到点后再次调用 wait 只返回快照（waitBudgetExhausted），机制上杜绝回查循环。
+
+### 3.2 回合内：onceFinal 即时唤醒（同步通道）
+
+Agent 调用 `download-wait` 后，等待循环与数据层的终态事件做竞速（`Promise.race`）。任何终态到达——包括用户在卡片上手动取消——wait **立即返回**，不等待轮询间隔，等效于剩余等待时间归零。
+
+### 3.3 回合外：deferred 占位自动投递（异步通道）
+
+1. `download-file` / `download-command` **创建任务时**自动注册 deferred 占位（携带发起会话的 sessionId/sessionPath）；
+2. Agent 无论是否调用 wait、是否传任何参数，结束回合即可——下载终态到达时宿主自动投递 `hana-background-result` 唤醒发起会话；
+3. Agent 已通过 wait 拿到结果时，投递结果携带 `consumedByWait: true` 供识别冗余，避免重复动作。
+
+### 3.4 分流原则
 
 | 场景 | 行为 |
 |------|------|
-| 回合内完成/取消 | onceFinal 清零唤醒 wait；无占位注册 |
-| 回合内正常推进 | wait 按节拍器节奏返回，Agent 决定续期或离场 |
-| 已下载完才调用 notifyWhenDone | 静默收束，不注册不投递 |
-| 离场后终态到达 | deferred 投递唤醒，消息含完整上下文 |
+| 创建任务 | 自动注册占位（不依赖 Agent） |
+| 回合内完成/取消 | wait onceFinal 清零唤醒，同步返回结果 |
+| 回合内并行守望 | wait 守望预算 90 秒；异常/预算到点返回，Agent 决策或收束 |
+| 收束回合 | 占位已在创建时注册，下载完成自动投递唤醒（deferred 接管） |
+| 同一任务守望预算已用尽 | 再调 wait 只返回快照（禁二次守望），收束等异步唤醒 |
+| 宿主协议无「按任务取消占位」API | 终态必投递；Agent 已消费时投递冗余但无害（result 带 consumedByWait） |
 
 ### 3.4 取消来源溯源
 
 每次取消均记录 `canceledBy` 来源：卡片按钮 = `user`，Agent 工具 = `agent`。该标注贯穿快照、wait 返回值与 deferred 投递消息；用户手动取消的通知附有「非故障，无需自动重试或换源」提示，防止 Agent 将人为干预误判为故障并自作主张重试。
 
-## 四、守望循环（wait 的健康续窗策略，v0.4.0）
+## 四、守望循环（wait 同步通道，v0.5.2）
 
-`download-wait` 默认 auto 模式下，脚本全程守望：**下载健康则持续等待直到终态，期间零打扰、零额外调用**；只有异常才提前返回交 Agent 决策。
+`download-wait` 守望模式下，脚本全程守望：**下载健康则持续等待直到终态，期间零打扰**；只有异常才提前返回交 Agent 决策。**守望期间 Agent 可并行执行其他工具**（并行语义），wait 返回时拿全结果。**Agent 手里没有 timeoutMs 旋钮——守望预算归脚本，决策归 Agent。**
 
 - 终态（done / failed / canceled / interrupted）→ 正常返回；onceFinal 事件使取消与完成瞬间穿透等待循环；
 - 停滞 → 后端 stalled 标记或本地 20s 无进展，立即返回；
-- **双窗降速警报**：以 10s 为检测窗（首窗 5s 仅建立 EMA 基线，豁免慢启动），连续两个窗口均速跌破常态基线（EMA）的 30% → 携带诊断包（当前速度 / 基线 / 比值 / ETA）提前返回，由 Agent 决策换源、接受慢速或取消；
-- 显式 `timeoutMs` 仅作总等待硬上限（安全阀，默认 30 分钟）；
-- `suggestNextWaitMs` 已退役——判断「是否需要回查」是脚本的职责，不再外包给 Agent 循环调用。
-
-速度估算优先使用同域名历史速度缓存（10 域名 × 3 样本加权，最新实测权重最高）；守望结束将实测速度写回缓存，形成自校正闭环。
+- **双窗降速警报**：以 10s 为检测窗（首窗 5s 仅建立 EMA 基线，豁免慢启动），连续两个窗口均速跌破常态基线（EMA）的 30% → 携带诊断包（当前速度 / 基线 / 比值 / ETA）提前返回；
+- **小文件慢速**（<100MB 但 ETA > 3 分钟）→ 立即返回（小文件正常应秒级完成）；
+- **显著慢于历史**（当前速度 < 该域名历史均速 ×30% 且 ETA > 5 分钟）→ 立即返回（源站/网络异常信号）；
+  以上两条与双窗降速相同，**首窗 5s 内豁免**（TCP 慢启动/代理建立/测速未稳，避免瞬时低速误报）；
+  **主动限速（speedLimit>0）不检测慢速**——限速是 Agent 预期行为，速度慢不代表异常（v0.5.3）；
+- **守望预算 90 秒**：健康下载超过预算返回未完成快照 + 收束指引（deferred 异步接管）；
+  同一任务预算到点后再次调用 wait 只返回快照（waitBudgetExhausted），**机制上杜绝回查循环**；
+- 速度估算优先使用同域名历史速度缓存（50 域名 × 5 样本，最新实测权重最高）；守望结束将实测速度写回缓存，形成自校正闭环。
 
 ## 五、功能清单
 
@@ -112,11 +133,14 @@ Agent 决定结束回合而下载未完成时，调用 `download-wait(taskId, no
 | 参数 | 必填 | 说明 |
 |------|------|------|
 | `taskId` | 是 | 任务 ID |
-| `mode` | 否 | auto（默认，脚本节拍器）/ self（Agent 自觉回查，慎用） |
-| `timeoutMs` | 否 | auto 下作硬上限；self 下为等待时长（不传则即时快照） |
-| `notifyWhenDone` | 否 | 结束回合前的大文件专用，语义见第三节 |
 
-返回快照含 state / percent / speed / eta / error / filePath / stalled / suggestNextWaitMs / canceledBy / userCanceled / notifyRegistered。
+行为由插件设置 `waitWatchMode` 决定：
+- **关闭（默认）= 快照模式**：立即返回当前状态（进度/速度/ETA/终态详情 + 一次性慢速/停滞提示），不阻塞；
+  Agent 收束后由 deferred 自动唤醒（返回文案引导）。
+- **开启 = 守望模式**：守望最多 90 秒（同步通道），终态在本回合返回；守望期间可并行执行其他工具；
+  异常（停滞/慢速/降速）立即返回带诊断包；预算到点返回未完成快照 + 收束指引；
+  同一任务预算到点后再次调用只返回快照（waitBudgetExhausted，防回查循环）。
+返回含 state / percent / speed / eta / error / filePath / stalled / slowAlert / slowSmall / histSlow / consumedByWait / deferredAutoRegistered（真实注册状态）。
 
 ### 5.4 取消工具 download-cancel
 
@@ -131,20 +155,20 @@ Agent 决定结束回合而下载未完成时，调用 `download-wait(taskId, no
 | 设置 | 默认 | 说明 |
 |------|------|------|
 | `defaultSaveDir` | 空 | 默认保存目录，留空用插件数据目录 downloads/ |
-| `waitMode` | auto | wait 回查模式（auto/self） |
-| `manualTimeoutMs` | 60000 | self 模式兜底阈值 |
 | `stallTimeoutMs` | 30000 | 停滞判定阈值（毫秒） |
+| `waitWatchMode` | false | wait 守望模式开关：关闭（默认）= wait 立即返回快照，Agent 收束后由 deferred 自动唤醒；开启 = wait 守望最多 90 秒（同步通道，守望期间可并行执行其他工具） |
 
 ## 七、项目结构
 
 ```
 manifest.json             插件声明（full-access）
-index.js                  生命周期：遗留任务恢复 + onFinal/onStall → deferred 分流投递
-lib/dlcore.js             任务管理器：流式下载/测速/限速/停滞监测/onceFinal/canceledBy/持久化
+index.js                  生命周期：遗留任务恢复 + onFinal/onStall → deferred 投递 + onload 幂等兜底
+lib/dlcore.js             任务管理器：流式下载/测速/限速/停滞监测/onceFinal/canceledBy/consumedByWait/持久化
+lib/deferred.js           deferred 占位 helper（register/resolve + 全局 bus 兜底）
 lib/progress-parsers.js   git/pnpm 输出解析（纯函数）
-tools/download-file.js    URL 下载工具
-tools/download-command.js 命令型下载工具
-tools/download-wait.js    回查守望工具（节拍器 + notifyWhenDone）
+tools/download-file.js    URL 下载工具（创建即注册占位）
+tools/download-command.js 命令型下载工具（创建即注册占位）
+tools/download-wait.js    回查守望工具（守望预算 + 异常检测，self/timeoutMs 已退役）
 tools/download-cancel.js  取消工具
 routes/download.js        卡片页/管理器页/status/list/cancel/prepare/reveal/settings 路由
 app/card.css|card.js      进度卡片前端（自包含色板、折叠交互、reportSize 报高）
@@ -193,6 +217,10 @@ extensions/enforce-download.js  下载约束注入扩展（预留，待宿主桥
 | v0.2.x | 跨会话管理器、主题跟随重建、高度内容驱动、服务端 explorer、安全加固 |
 | v0.3.x | canceledBy 来源标注、onceFinal 即时唤醒、卡片定宽、青夜字色、返回文本自足、双通道守望定形 |
 | v0.4.0 | wait 守望循环重构：健康续窗至终态、双窗降速警报（10s 检测窗/EMA 基线/首窗 5s 豁免）、suggestNextWaitMs 退役、loopback 代理豁免 |
+| v0.5.0 | **deferred 占位自动注册**（创建时 await 注册，终态必投递，onload 幂等兜底，Agent 零操作）；**timeoutMs/mode 参数移除**（self 退役，等待预算归脚本）；**异常检测新增**：小文件慢速（<100MB & ETA>3min）、显著慢于历史（<历史 30% & ETA>5min），首窗 5s 豁免；wait 消费标记 consumedByWait；review 修正：register 竞态防护、deferredAutoRegistered 报真实值、onceFinal 可取消防 waiter 泄漏、restore 读回 sessionId、git-clone 加 --progress、停滞占位 key 唯一化；修 download-file 缺失 fs import |
+| v0.5.2 | **双通道定稿**：wait=同步通道（守望，并行语义，预算 90 秒），deferred=异步通道（创建时自动注册，收束后投递唤醒）；**防回查循环**：守望预算到点后禁二次守望（waitBudgetExhausted），未完成时收束指引唯一方向（不再提供继续守望）；修复 wait 守望模式变量作用域崩溃（stalled is not defined）；修复 dlcore snapshot/_persist 漏加 deferredRegistered 导致的误报 |
+| v0.5.3 | 主动限速（speedLimit>0）排除慢速/历史对比检测：限速是 Agent 预期行为，不再误报「小文件慢速异常」（实测复现并修复） |
+| v0.5.4 | **守望开关**：waitWatchMode 配置（默认关闭）——关闭=wait 立即快照（默认流程：创建→快照→收束→deferred 自动唤醒），开启=守望 90 秒（同步通道）；快照模式带一次性慢速/停滞提示；自然派活实测：快照模式收束指引有效（Agent 自然收束等唤醒）、慢速提示引导收束、并行语义成立、主会话收束后 deferred 唤醒链路验证通过 |
 
 ---
 
