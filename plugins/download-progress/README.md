@@ -4,7 +4,7 @@
 > 下载任务实时可视化、进度状态可查询、中途可干预、终态双通道守望。
 > 同时提供命令型下载（git clone / pnpm install）与跨会话下载管理器。
 
-- 当前版本：v0.5.0
+- 当前版本：v0.5.5
 - 权限要求：full-access
 - 运行环境：HanaAgent ≥ 0.158.0
 
@@ -221,6 +221,7 @@ extensions/enforce-download.js  下载约束注入扩展（预留，待宿主桥
 | v0.5.2 | **双通道定稿**：wait=同步通道（守望，并行语义，预算 90 秒），deferred=异步通道（创建时自动注册，收束后投递唤醒）；**防回查循环**：守望预算到点后禁二次守望（waitBudgetExhausted），未完成时收束指引唯一方向（不再提供继续守望）；修复 wait 守望模式变量作用域崩溃（stalled is not defined）；修复 dlcore snapshot/_persist 漏加 deferredRegistered 导致的误报 |
 | v0.5.3 | 主动限速（speedLimit>0）排除慢速/历史对比检测：限速是 Agent 预期行为，不再误报「小文件慢速异常」（实测复现并修复） |
 | v0.5.4 | **守望开关**：waitWatchMode 配置（默认关闭）——关闭=wait 立即快照（默认流程：创建→快照→收束→deferred 自动唤醒），开启=守望 90 秒（同步通道）；快照模式带一次性慢速/停滞提示；自然派活实测：快照模式收束指引有效（Agent 自然收束等唤醒）、慢速提示引导收束、并行语义成立、主会话收束后 deferred 唤醒链路验证通过 |
+| v0.5.5 | 修复下载管理器页进度条不可见：.mgr-bar 缺 height（高度 0），补 height:100% 撑满轨道；CSS 即时生效（路由 no-store 不缓存） |
 
 ---
 

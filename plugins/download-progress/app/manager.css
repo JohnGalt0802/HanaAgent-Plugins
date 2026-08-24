@@ -294,6 +294,7 @@ html, body {
 .mgr-bar {
   border-radius: 2px;
   background: var(--mgr-accent, #4A6CF7);
+  height: 100%; /* 撑满轨道高度（wrap 3px）——缺 height 时高度为 0，进度条不可见 */
   transition: width 0.4s ease;
 }
 .mgr-bar.indet {
