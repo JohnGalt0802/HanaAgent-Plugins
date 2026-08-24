@@ -45,7 +45,7 @@ html, body {
 }
 
 #dl-root {
-  font-family: var(--font-ui, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif);
+  font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", SimSun, Georgia, serif; /* 衬线字体（管理器页全局） */
   color: var(--mgr-text, #101012);
   font-size: 13px;
   line-height: 1.45;
@@ -229,12 +229,47 @@ html, body {
 }
 
 .mgr-row {
+  position: relative; /* 整行进度背景层锚点 */
   border: 1px solid var(--mgr-border, rgba(0, 0, 0, 0.08));
   border-radius: 8px;
   margin-bottom: 4px;
   overflow: hidden;
   background: var(--mgr-row-bg, rgba(0, 0, 0, 0.015));
 }
+/* 整行进度背景：下载任务行即进度条（左侧蓝 → 右侧绿渐变，随百分比填充 + 流动波动） */
+.mgr-row-bg {
+  position: absolute; inset: 0; width: 0%;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.22), rgba(16, 185, 129, 0.18));
+  pointer-events: none;
+  transition: width 0.4s ease;
+  z-index: 0;
+}
+.mgr-row-bg::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 30%, rgba(255, 255, 255, 0.10) 50%, transparent 70%);
+  background-size: 300% 100%;
+  animation: mgr-flow 4s linear infinite;
+}
+@keyframes mgr-flow {
+  0% { background-position: 300% 0; }
+  100% { background-position: -300% 0; }
+}
+.mgr-row-bg.indet {
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.30), rgba(16, 185, 129, 0.26), transparent);
+  background-size: 200% 100%;
+  animation: mgr-bg-slide 3.5s linear infinite;
+}
+.mgr-row-bg.indet::after { display: none; }
+@keyframes mgr-bg-slide {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+/* 状态底色：完成淡绿 / 失败淡红（低饱和） */
+.mgr-row.mgr-row-done { background: rgba(74, 180, 120, 0.10); }
+.mgr-row.mgr-row-fail { background: rgba(220, 100, 100, 0.08); }
+/* 内容层提升到进度背景之上 */
+.mgr-head, .mgr-main, .mgr-actions { position: relative; z-index: 1; }
 .mgr-head {
   display: flex;
   align-items: center;
@@ -258,16 +293,28 @@ html, body {
 }
 .mgr-badge {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
-  padding: 1px 8px;
-  border-radius: var(--radius-chat-card, 8px);
-  font-weight: 500;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--mgr-muted, #6B6F73);
 }
-.st-running { background: rgba(74, 108, 247, 0.12); color: var(--mgr-accent, #4A6CF7); }
-.st-pending { background: rgba(180, 140, 60, 0.15); color: var(--mgr-warn, #A08030); }
-.st-done { background: rgba(46, 158, 91, 0.12); color: var(--mgr-success, #2E9E5B); }
-.st-failed { background: rgba(214, 69, 69, 0.12); color: var(--mgr-danger, #D64545); }
-.st-canceled, .st-interrupted, .st-unknown { background: rgba(140, 140, 140, 0.15); color: var(--mgr-muted, #6B6F73); }
+/* 状态圆点 + 文字（轻量化：无背景无胶囊，颜色跟随主题变量） */
+.mgr-badge::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.st-running { color: var(--mgr-accent, #4A6CF7); }
+.st-pending { color: var(--mgr-warn, #A08030); }
+.st-done { color: var(--mgr-success, #2E9E5B); }
+.st-failed { color: var(--mgr-danger, #D64545); }
+.st-canceled, .st-interrupted, .st-unknown { color: var(--mgr-muted, #6B6F73); }
 
 .mgr-name {
   font-weight: 500;
@@ -282,28 +329,6 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.mgr-bar-wrap {
-  height: 3px;
-  border-radius: 2px;
-  background: var(--mgr-border, rgba(0, 0, 0, 0.08));
-  margin-top: 4px;
-  overflow: hidden;
-}
-.mgr-bar {
-  border-radius: 2px;
-  background: var(--mgr-accent, #4A6CF7);
-  height: 100%; /* 撑满轨道高度（wrap 3px）——缺 height 时高度为 0，进度条不可见 */
-  transition: width 0.4s ease;
-}
-.mgr-bar.indet {
-  background: var(--mgr-accent);
-  animation: mgr-pulse 1.4s ease-in-out infinite;
-}
-@keyframes mgr-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
 }
 
 .mgr-actions {

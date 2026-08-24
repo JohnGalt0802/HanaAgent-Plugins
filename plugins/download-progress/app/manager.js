@@ -197,7 +197,15 @@
     }
 
     visible.forEach(function (t) {
-      var row = el("div", "mgr-row");
+      var row = el("div", "mgr-row" + (t.state === "done" ? " mgr-row-done" : (t.state === "failed" || t.state === "canceled" || t.state === "interrupted") ? " mgr-row-fail" : ""));
+      // 整行进度背景：下载任务行即进度条（背景按百分比填充）
+      if (t.state === "running" || t.state === "pending") {
+        var rowPct = t.total ? Math.min(100, (t.received / t.total) * 100) : 0;
+        var rowBg = el("div", "mgr-row-bg");
+        rowBg.style.width = (t.total ? rowPct : 5) + "%";
+        if (!t.total && t.state === "running") rowBg.classList.add("indet");
+        row.appendChild(rowBg);
+      }
       var isExpanded = expanded === t.taskId;
       var st = stateMeta(t);
 
@@ -227,15 +235,6 @@
       metaRow.textContent = metaBits.filter(Boolean).join(" · ");
 
       main.appendChild(nameRow);
-      if (t.state === "running" || t.state === "pending") {
-        var barWrap = el("div", "mgr-bar-wrap");
-        var bar = el("div", "mgr-bar");
-        var pct = t.total ? Math.min(100, (t.received / t.total) * 100) : (t.state === "running" ? 5 : 0);
-        bar.style.width = (t.total ? pct : 4) + "%";
-        if (!t.total && t.state === "running") bar.classList.add("indet");
-        barWrap.appendChild(bar);
-        main.appendChild(barWrap);
-      }
       main.appendChild(metaRow);
 
       var actions = el("div", "mgr-actions");

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "download-progress",
   "name": "Hana Download Manager",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "跨会话下载管理器：聊天内嵌实时进度卡片 + 右侧统一管理页（全部 Agent 会话的下载任务）。",
   "author": "John Galt",
   "minAppVersion": "0.158.0",
