@@ -1,37 +1,42 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; font-family: "Microsoft YaHei", system-ui, sans-serif; }
 body { background: linear-gradient(160deg, #0b1220 0%, #16233b 55%, #1c2e4a 100%); }
+:root { --easymodel-card-titlebar-space: 44px; }
 
 #viewer { position: relative; flex: 1 1 auto; min-height: 0; }
 
-#app { position: absolute; inset: 0; display: flex; flex-direction: column; }
+#app { position: absolute; inset: 0; display: flex; flex-direction: column; padding-top: var(--easymodel-card-titlebar-space); }
 
 #toolbar {
   position: relative; top: auto; left: auto; transform: none;
-  width: 100%; flex: 0 0 auto; z-index: 10;
+  width: 100%; min-width: 0; flex: 0 0 auto; z-index: 10;
   display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+  overflow: visible; pointer-events: auto;
   background: rgba(10, 18, 34, 0.55); backdrop-filter: blur(8px);
   border: none; border-bottom: 1px solid rgba(160, 200, 255, 0.16);
   border-radius: 0;
   padding: 8px 10px;
 }
-#toolbar .title { color: #cfe6ff; font-size: 20px; font-weight: 700; letter-spacing: 1px; margin-right: 6px; }
+#toolbar .title { flex: 0 0 auto; color: #cfe6ff; font-size: 20px; font-weight: 700; letter-spacing: 1px; margin-right: 6px; white-space: nowrap; }
 .btn {
+  position: relative; z-index: 1; flex: 0 0 auto; min-height: 32px;
   background: rgba(160, 200, 255, 0.08); color: #b8d4f2;
   border: 1px solid rgba(160, 200, 255, 0.22); border-radius: 6px;
   padding: 6px 14px; font-size: 14px; cursor: pointer; user-select: none;
+  white-space: nowrap; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   transition: background 0.15s, color 0.15s;
 }
 .btn:hover { background: rgba(160, 200, 255, 0.2); color: #ffffff; }
-.btn.active { background: rgba(110, 190, 255, 0.3); color: #ffffff; border-color: rgba(110, 190, 255, 0.5); }
+.btn:active { background: rgba(110, 190, 255, 0.26); color: #ffffff; }
+.btn:focus-visible { outline: 2px solid #9fe0ff; outline-offset: 2px; }
 
-.dd { position: relative; }
+.dd { position: relative; flex: 0 0 auto; }
 .dd-menu {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
   background: rgba(12, 22, 40, 0.92); backdrop-filter: blur(10px);
   border: 1px solid rgba(160, 200, 255, 0.2); border-radius: 10px;
   padding: 8px; display: none; min-width: 148px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); pointer-events: auto;
 }
 .dd-menu.open { display: block; }
 .dd-sec { color: rgba(160, 200, 245, 0.55); font-size: 12px; padding: 6px 10px 4px; letter-spacing: 1px; }
@@ -41,7 +46,6 @@ body { background: linear-gradient(160deg, #0b1220 0%, #16233b 55%, #1c2e4a 100%
   padding: 7px 10px; border-radius: 6px; cursor: pointer;
 }
 .dd-item:hover { background: rgba(110, 190, 255, 0.2); color: #ffffff; }
-.dd-item.cur { color: #9fe0ff; background: rgba(110, 190, 255, 0.12); }
 
 #info {
   position: absolute; right: 16px; bottom: 16px; z-index: 10;
@@ -78,14 +82,12 @@ body.light #toolbar { background: rgba(255, 253, 247, 0.7); border-color: rgba(1
 body.light #toolbar .title { color: #4a433c; }
 body.light .btn { color: #5a5148; background: rgba(90, 80, 65, 0.06); border-color: rgba(120, 110, 90, 0.3); }
 body.light .btn:hover { background: rgba(90, 80, 65, 0.14); color: #2a2622; }
-body.light .btn.active { background: rgba(83, 125, 150, 0.25); color: #2a2622; border-color: rgba(83, 125, 150, 0.5); }
 body.light #info { color: rgba(74, 67, 60, 0.75); background: rgba(255, 253, 247, 0.6); border-color: rgba(120, 110, 90, 0.2); }
 body.light #info b { color: #537d96; }
 body.light .dd-menu { background: rgba(255, 253, 247, 0.96); border-color: rgba(120, 110, 90, 0.3); }
 body.light .dd-sec { color: rgba(90, 80, 65, 0.6); }
 body.light .dd-item { color: #5a5148; }
 body.light .dd-item:hover { background: rgba(90, 80, 65, 0.12); color: #2a2622; }
-body.light .dd-item.cur { color: #537d96; background: rgba(83, 125, 150, 0.15); }
 body.light #face-modal { background: rgba(60, 50, 35, 0.25); }
 body.light .face-panel { background: rgba(255, 253, 247, 0.97); border-color: rgba(120, 110, 90, 0.3); }
 body.light .face-title { color: #4a433c; }

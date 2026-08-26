@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "easymodel-viewer",
   "name": "EasyModel 模型查看器",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "在 Hana 工作台直接渲染 STL / OBJ / PLY / GLB / GLTF / 3MF / STEP / IGES 工程模型。支持打开文件夹并横向预览浏览多个模型，作为卡片在工作台任意位置摆放。",
   "minAppVersion": "0.159.0",
   "trust": "full-access",

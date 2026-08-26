@@ -71,7 +71,7 @@ v2.0 起**无配置项**。v1.x 时代的 `placement` 配置（right / center �
 
 ```
 easymodel-viewer/
-├── manifest.json                 # 插件清单（v2.0 单一 widget 入口）
+├── manifest.json                 # 插件清单（v2.0.1 单一 widget 入口）
 ├── routes/
 │   └── viewer.js                 # Hono 路由：/viewer（widget shell）/viewer/model /viewer/scan /viewer/diag
 ├── tools/
@@ -82,6 +82,12 @@ easymodel-viewer/
 │   └── vendor/legacy/            # three.min.js + STL/OBJ/PLY/GLTF/3MF Loader + ArcballControls
 └── README.md
 ```
+
+## v2.0.1 变更
+
+- 卡片化 WebView 避开宿主 solid 标题栏的 44px 安全区，320px 窄卡片顶部按钮可完整点击
+- 移除工具栏与视角下拉的常驻 active 颜色，状态改用 `aria-pressed` / `aria-selected` 表达
+- 保持线框、自转、网格、视角、颜色、换肤、光源等交互逻辑不变
 
 ## v2.0 变更
 
@@ -105,6 +111,7 @@ easymodel-viewer/
 
 ## 版本
 
+- 2.0.1（2026-08-26）：修复卡片化 WebView 顶部按钮命中区域与常驻变色
 - 2.0.0（2026-08-23）：移除 right/center 二选一配置
 - 1.5.0：缩略图预览条 + WebGL 上下文修复
 - 1.2.0：打开文件夹 + 多模型工作集

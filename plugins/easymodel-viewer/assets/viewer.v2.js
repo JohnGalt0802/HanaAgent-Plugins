@@ -214,7 +214,7 @@ function replaceObject(obj) {
 function mount(name, unit) {
   autoRotate = false;
   const btnRotate = document.getElementById('btn-rotate');
-  if (btnRotate) btnRotate.classList.remove('active');
+  setPressed(btnRotate, false);
   const hint = document.getElementById('hint');
   if (hint) hint.style.display = 'none';
   scene.updateMatrixWorld(true);
@@ -440,6 +440,16 @@ function drawColorWheel(canvas) {
     }
   }
 }
+function setPressed(button, pressed) {
+  if (!button) return;
+  button.classList.remove('active');
+  button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+}
+function setSelected(button, selected) {
+  if (!button) return;
+  button.classList.remove('cur');
+  button.setAttribute('aria-selected', selected ? 'true' : 'false');
+}
 function buildColorMenu() {
   const sw = document.querySelector('[data-swatches]');
   if (sw) {
@@ -523,7 +533,7 @@ function updateProjection() {
 function setProjection(type) {
   if (type === 'reset') { resetView(); return; }
   isOrtho = (type === 'ortho');
-  document.querySelectorAll('#view-menu .dd-item[data-act]').forEach((b) => b.classList.toggle('cur', b.dataset.act === type));
+  document.querySelectorAll('#view-menu .dd-item[data-act]').forEach((b) => setSelected(b, b.dataset.act === type));
   updateProjection();
 }
 
@@ -807,7 +817,7 @@ function bindEvents() {
 
   document.getElementById('btn-wire').onclick = (e) => {
     isWire = !isWire;
-    e.target.classList.toggle('active', isWire);
+    setPressed(e.currentTarget, isWire);
     if (current) {
       current.traverse((c) => { if (c.material) {
         const mats = Array.isArray(c.material) ? c.material : [c.material];
@@ -817,11 +827,12 @@ function bindEvents() {
   };
   document.getElementById('btn-rotate').onclick = (e) => {
     autoRotate = !autoRotate;
-    e.target.classList.toggle('active', autoRotate);
+    setPressed(e.currentTarget, autoRotate);
   };
   document.getElementById('btn-grid').onclick = (e) => {
-    gridGroup.visible = !gridGroup.visible;
-    e.target.classList.toggle('active', !gridGroup.visible);
+    const visible = !gridGroup.visible;
+    gridGroup.visible = visible;
+    setPressed(e.currentTarget, visible);
   };
   document.getElementById('btn-fit').onclick = (e) => {
     e.stopPropagation();
@@ -848,15 +859,15 @@ function bindEvents() {
     dirLight.position.copy(camera.position);
     dirLight.target.position.copy(controls.target);
     dirLight.target.updateMatrixWorld();
-    e.target.classList.add('active');
-    document.getElementById('btn-light-def').classList.remove('active');
+    setPressed(e.currentTarget, true);
+    setPressed(document.getElementById('btn-light-def'), false);
   };
   document.getElementById('btn-light-def').onclick = (e) => {
     dirLight.position.set(6, 10, 6);
     dirLight.target.position.set(0, 0, 0);
     dirLight.target.updateMatrixWorld();
-    e.target.classList.add('active');
-    document.getElementById('btn-light').classList.remove('active');
+    setPressed(e.currentTarget, true);
+    setPressed(document.getElementById('btn-light'), false);
   };
 
   document.getElementById('btn-prev').onclick = () => showModel(currentIndex - 1);

@@ -190,42 +190,42 @@ async function renderShell(c, ctx) {
   <div id="app">
     <div id="toolbar">
       <span class="title">EasyModel</span>
-      <button class="btn" id="btn-pick">打开文件</button>
-      <button class="btn" id="btn-folder">打开文件夹</button>
-      <button class="btn" id="btn-wire">线框</button>
-      <button class="btn" id="btn-rotate">自转</button>
-      <button class="btn" id="btn-grid">网格</button>
+      <button type="button" class="btn" id="btn-pick">打开文件</button>
+      <button type="button" class="btn" id="btn-folder">打开文件夹</button>
+      <button type="button" class="btn" id="btn-wire" aria-pressed="false">线框</button>
+      <button type="button" class="btn" id="btn-rotate" aria-pressed="false">自转</button>
+      <button type="button" class="btn" id="btn-grid" aria-pressed="false">网格</button>
       <div class="dd" id="view-dd">
-        <button class="btn" id="btn-fit">视角 ▾</button>
+        <button type="button" class="btn" id="btn-fit">视角 ▾</button>
         <div class="dd-menu" id="view-menu">
-          <button class="dd-item" data-act="reset">重置视角</button>
-          <button class="dd-item" data-act="persp">透视</button>
-          <button class="dd-item" data-act="ortho">正交</button>
+          <button type="button" class="dd-item" data-act="reset">重置视角</button>
+          <button type="button" class="dd-item" data-act="persp">persp</button>
+          <button type="button" class="dd-item" data-act="ortho">正交</button>
           <div class="dd-sec">正视方向</div>
-          <button class="dd-item" data-face="front">前视</button>
-          <button class="dd-item" data-face="back">后视</button>
-          <button class="dd-item" data-face="left">左视</button>
-          <button class="dd-item" data-face="right">右视</button>
-          <button class="dd-item" data-face="top">俯视</button>
-          <button class="dd-item" data-face="bottom">仰视</button>
+          <button type="button" class="dd-item" data-face="front">前视</button>
+          <button type="button" class="dd-item" data-face="back">后视</button>
+          <button type="button" class="dd-item" data-face="left">左视</button>
+          <button type="button" class="dd-item" data-face="right">右视</button>
+          <button type="button" class="dd-item" data-face="top">俯视</button>
+          <button type="button" class="dd-item" data-face="bottom">仰视</button>
         </div>
       </div>
       <div class="dd" id="color-dd">
-        <button class="btn" id="btn-color">颜色 ▾</button>
+        <button type="button" class="btn" id="btn-color">颜色 ▾</button>
         <div class="dd-menu color-picker" id="color-menu">
           <div class="dd-label">预设颜色</div>
           <div class="swatches" data-swatches></div>
           <canvas class="cp-wheel" data-wheel width="82" height="82"></canvas>
         </div>
       </div>
-      <button class="btn" id="btn-theme">换肤</button>
-      <button class="btn" id="btn-light">光源⇄视角</button>
-      <button class="btn" id="btn-light-def">光源复位</button>
+      <button type="button" class="btn" id="btn-theme">换肤</button>
+      <button type="button" class="btn" id="btn-light" aria-pressed="false">光源⇄视角</button>
+      <button type="button" class="btn" id="btn-light-def" aria-pressed="false">光源复位</button>
     </div>
     <div id="preview-strip" data-preview-strip hidden></div>
     <div id="viewer">
-      <button class="nav-btn nav-prev" id="btn-prev" title="上一个" disabled>◀</button>
-      <button class="nav-btn nav-next" id="btn-next" title="下一个" disabled>▶</button>
+      <button type="button" class="nav-btn nav-prev" id="btn-prev" title="上一个" disabled>◀</button>
+      <button type="button" class="nav-btn nav-next" id="btn-next" title="下一个" disabled>▶</button>
       <div class="hint" id="hint">把 STL / OBJ / PLY / GLB / 3MF / STEP / IGES 拖到这里<br>或点「打开文件」「打开文件夹」</div>
       <div id="status" data-status></div>
     </div>
@@ -234,12 +234,12 @@ async function renderShell(c, ctx) {
       <div class="face-panel">
         <div class="face-title">选择视角 · Esc 关闭</div>
         <div class="face-grid">
-          <button class="face-btn" data-face="front">前</button>
-          <button class="face-btn" data-face="back">后</button>
-          <button class="face-btn" data-face="left">左</button>
-          <button class="face-btn" data-face="right">右</button>
-          <button class="face-btn" data-face="top">上</button>
-          <button class="face-btn" data-face="bottom">下</button>
+          <button type="button" class="face-btn" data-face="front">前</button>
+          <button type="button" class="face-btn" data-face="back">后</button>
+          <button type="button" class="face-btn" data-face="left">左</button>
+          <button type="button" class="face-btn" data-face="right">右</button>
+          <button type="button" class="face-btn" data-face="top">上</button>
+          <button type="button" class="face-btn" data-face="bottom">下</button>
         </div>
       </div>
     </div>
