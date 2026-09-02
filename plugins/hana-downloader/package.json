@@ -1,0 +1,6 @@
+{
+  "name": "hana-downloader",
+  "version": "0.11.0",
+  "type": "module",
+  "private": true
+}
