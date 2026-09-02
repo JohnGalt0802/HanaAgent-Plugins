@@ -48,9 +48,9 @@
 ## 2. 触发方法（构造六象限）
 
 ### 通用工具
-- 发起下载：`download-progress_download-file`（URL + fileName + 可选 speedLimit）
-- 取消下载：`download-progress_download-cancel`（taskId）
-- 查询状态：`download-progress_download-wait`（taskId，主动回查）
+- 发起下载：`hana-downloader_download-file`（URL + fileName + 可选 speedLimit）
+- 取消下载：`hana-downloader_download-cancel`（taskId）
+- 查询状态：`hana-downloader_download-wait`（taskId，主动回查）
 - 检查宿主投递：查 `~/.hanako\.ephemeral\deferred-tasks.json` 中该 taskId 的 `status` / `delivered` / `deliverySuppressed` / `result.state`
 - 测试源：
   - 快速完成：`https://proof.ovh.net/files/1Mb.dat`（小文件，不限速）
@@ -204,7 +204,7 @@ print('status:', v.get('status'), '| delivered:', v.get('delivered'),
 
 ## 5-b. 实测基线（community 源 v0.9.3 sync-first，2026-09-01）
 
-测试环境：宿主 0.814.0，community 源 `~/.hanako\plugins\download-progress` 加载 v0.9.3 sync-first delivery（manifest 仍是 0.9.2，代码已 0.9.3），dev 槽已卸载（单版本避免多 plugin 回调累积）。本次实测为完整六象限重测基线。
+测试环境：宿主 0.814.0，community 源 `~/.hanako\plugins\hana-downloader` 加载 v0.9.3 sync-first delivery（manifest 仍是 0.9.2，代码已 0.9.3），dev 槽已卸载（单版本避免多 plugin 回调累积）。本次实测为完整六象限重测基线。
 
 ### 关键发现
 
