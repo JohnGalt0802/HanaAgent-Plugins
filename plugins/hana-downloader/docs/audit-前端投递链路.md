@@ -1,4 +1,4 @@
-# download-progress 前端 UI 「同步投递」可视化链路审计
+# hana-downloader 前端 UI 「同步投递」可视化链路审计
 
 > 范围：用户在前端聊天流看到的「大姐收到了来自 download 工具的结果 / 下载完成：xxx.bin」这种**同步投递提示**，从前端到宿主到底走哪条链路产生。
 > 关键结论一句话：**这套「同步投递 UI 显示」完全由宿主内置的 `hana-background-result` + `display:false` 渲染管线驱动，下载插件自身的前端（card.js / manager.js）从不主动 emit / track / 上送任何 custom message**；它跟 agent jsonl 感知是**耦合于同一条 custom_message entry 的两条独立渲染分支**，但显示本身**不依赖 agent 是否在同轮回复**。
@@ -10,7 +10,7 @@
 
 ### 1.1 卡片声明（manifest.json）
 
-`<workspace>\download-progress\manifest.json` L31-53 声明两张 webview 卡片：
+`<workspace>\hana-downloader\manifest.json` L31-53 声明两张 webview 卡片：
 
 ```json
 "contributes": {
@@ -29,7 +29,7 @@
 
 ### 1.2 卡片前端 card.js 的实际行为
 
-`<workspace>\download-progress\app\card.js` 是一个 iframe webview 卡片，纯**轮询 + 渲染**模型：
+`<workspace>\hana-downloader\app\card.js` 是一个 iframe webview 卡片，纯**轮询 + 渲染**模型：
 
 - **数据源**：每 600 ms 调一次 `apiFetch("/download/status?taskId=...")` 拿任务快照（L175 `timer = setInterval(poll, 600)`；L148-167 `poll()` 函数）。
 - **渲染**：L248-405 `render(t)` 把状态机 `t.state ∈ {pending, running, done, failed, canceled, interrupted}` 渲染成 DOM。`stateBadge()` L419 把状态映射成中文「下载中/准备中/完成/失败/已取消/已中断/停滞」。
@@ -42,7 +42,7 @@
 
 ### 1.3 卡片前端 manager.js 的实际行为
 
-`<workspace>\download-progress\app\manager.js` 同款模式：
+`<workspace>\hana-downloader\app\manager.js` 同款模式：
 
 - **数据源**：每 3000 ms 调 `apiFetch("/download/list")` 拿跨会话任务列表（L33 `POLL_MS = 3000`，L420-444 `poll()`）
 - **渲染**：L165-273 `render()` 列出任务行；L184-194 行背景按百分比填充
@@ -142,7 +142,7 @@ const res = await bus.request(
     triggerTurn: true,                // ← unsettled 时让宿主主动发起新 turn
     details: { schemaVersion: 1, ...(details || {}) },
   },
-  { caller: { pluginId: "download-progress" } }
+  { caller: { pluginId: "hana-downloader" } }
 );
 ```
 
@@ -377,8 +377,8 @@ function JSt({ status, result, reason }) {
 
 | 证据 | 位置 |
 |---|---|
-| 插件前端从不 emit / track | `<workspace>\download-progress\app\card.js`、`app\manager.js` 全文件 grep "emit\|track\|customType" 仅命中主题色 message 监听，无功能性调用 |
-| 插件 manifest 没声明 `messageRenderers` | `<workspace>\download-progress\manifest.json` grep "messageRenderers" 0 匹配 |
+| 插件前端从不 emit / track | `<workspace>\hana-downloader\app\card.js`、`app\manager.js` 全文件 grep "emit\|track\|customType" 仅命中主题色 message 监听，无功能性调用 |
+| 插件 manifest 没声明 `messageRenderers` | `<workspace>\hana-downloader\manifest.json` grep "messageRenderers" 0 匹配 |
 | `dl-nextturn.js` 主投递协议 | `extensions/dl-nextturn.js` L122-148 `steerViaBus` 内 `bus.request("session:send-custom", {customType:"hana-background-result", display:false, triggerTurn:true, ...})` |
 | 投递 content 形态 | `extensions/dl-nextturn.js` L334 `content = <hana-background-result status="..." type="download" task-id="..." canceled-by="..." user-canceled="...">下载完成：${fileName}</hana-background-result>` |
 | 宿主内置 `hana-background-result` 常量 | `bundle/index.js` L18134 `const ky = "hana-background-result"` |
