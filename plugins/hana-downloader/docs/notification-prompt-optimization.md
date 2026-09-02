@@ -1,7 +1,7 @@
-# download-progress 后台通知 Prompt 模板调研与优化草案
+# hana-downloader 后台通知 Prompt 模板调研与优化草案
 
 > 日期：2026-09-02  
-> 范围：仅调研 dev 源 `<workspace>\download-progress` + 宿主 bundle `0.814.0`，产出优化草案，不改代码。  
+> 范围：仅调研 dev 源 `<workspace>\hana-downloader` + 宿主 bundle `0.814.0`，产出优化草案，不改代码。  
 > 核心判据：以 agent 在下一轮提示词（`payload.messages` / jsonl `custom_message`）里实际看到的字符串为准，不依赖日志。
 
 ---
@@ -120,7 +120,7 @@ content: `<hana-background-result task-id="${esc(taskId)}" status="${status}" ty
 
 > 第1次download-wait返回：done, 100%, 256KB/256KB（262144字节）。后台done通知也到了：state=done, total=262144, received=262144。
 
-这说明 agent 在同一段思考里把「主动 `download-wait` 的工具返回值」和「系统注入的 HBR 通知」并列提及，且用“后台done通知也到了”来描述后者。由于 HBR 正文只有 `state/total/received`，没有任何“这是系统通知、来源是 download-progress、无需你再次确认”的标识，agent 无法一眼区分两者。
+这说明 agent 在同一段思考里把「主动 `download-wait` 的工具返回值」和「系统注入的 HBR 通知」并列提及，且用“后台done通知也到了”来描述后者。由于 HBR 正文只有 `state/total/received`，没有任何“这是系统通知、来源是 hana-downloader、无需你再次确认”的标识，agent 无法一眼区分两者。
 
 ### 2.2 stall 任务 `d74aefd0-mtjdteuo`
 
@@ -176,7 +176,7 @@ agent 在提示词里看到的 HBR 就是 §1.3 那段 XML-like 字符串。宿�
 <hana-background-result
   task-id="9ab2a343-mtje3805"
   source="system"
-  plugin="download-progress"
+  plugin="hana-downloader"
   type="download"
   status="done"
   timestamp="2026-09-02T01:00:20.180Z"
@@ -207,7 +207,7 @@ elapsed: 0.35s
 <hana-background-result
   task-id="ab12cd34-mtje9999"
   source="system"
-  plugin="download-progress"
+  plugin="hana-downloader"
   type="download"
   status="error"
   timestamp="2026-09-02T02:10:00.000Z"
@@ -242,7 +242,7 @@ error-message: HTTP 404 Not Found
 <hana-background-result
   task-id="d74aefd0-mtjdteuo:stall:1788310362985"
   source="system"
-  plugin="download-progress"
+  plugin="hana-downloader"
   type="download"
   status="stall"
   timestamp="2026-09-02T00:52:42.985Z"
@@ -276,7 +276,7 @@ stalled-at: 2026-09-02T00:52:42.984Z
 <hana-background-result
   task-id="aa11bb22-mtje7777"
   source="system"
-  plugin="download-progress"
+  plugin="hana-downloader"
   type="download"
   status="cancelled"
   timestamp="2026-09-02T03:05:00.000Z"
@@ -314,7 +314,7 @@ canceled-by: user
 
 | 文件 / 函数 | 改什么 |
 |---|---|
-| `lib/delivery.js` `buildResult()` | 在 result 中补充 `source:"system"`、`plugin:"download-progress"`、`status`（与 `state` 解耦：done/error/stall/cancelled）、`timestamp`、`elapsedMs`、`elapsed`、`errorCode`、`errorMessage`、`action`。 |
+| `lib/delivery.js` `buildResult()` | 在 result 中补充 `source:"system"`、`plugin:"hana-downloader"`、`status`（与 `state` 解耦：done/error/stall/cancelled）、`timestamp`、`elapsedMs`、`elapsed`、`errorCode`、`errorMessage`、`action`。 |
 | `lib/delivery.js` `buildEntry()` | 把 `status` 改为直接使用 `result.status`（done→done、failed→error、stall→stall、canceled→cancelled），并在 HBR 根标签上输出 `source/plugin/status/timestamp/action`。正文首行输出人类可读摘要，再保留 JSON 块。 |
 | `lib/delivery.js` `handleStall()` | stall result 增加 `status:"stall"`、`timestamp`、`elapsed`，并把 `hint` 改成“请以最新 download-wait / done 通知为准”的明确说明。 |
 | `lib/delivery.js` `handleFinal()` | 确保 canceledBy=user 的 result 使用 `status:"cancelled"`，并带 `action:"none"`；agent 取消仍静默。 |
