@@ -149,6 +149,18 @@ export function createDelivery({ bus, manager, dataDir, log }) {
     }
   }
 
+  // agent 是否还在 streaming（跑长任务/工具挂起）。bundle 魔改暴露 __sessionHooks.isSessionActive；
+  // 未魔改时返回 null（调方按不可判决处理，保留原超时兜底）。
+  function sessionActive(sessionPath) {
+    try {
+      const fn = globalThis.__sessionHooks?.isSessionActive;
+      if (typeof sessionPath !== "string" || typeof fn !== "function") return null;
+      return fn(sessionPath) === true;
+    } catch { return null; }
+  }
+
+  const SYNC_MAX_WAIT_MS = 10 * 60 * 1000; // 续等总上限：长任务最多续 10 分钟，防悬挂工具永不出结果
+
   function enqueueSync(t, entry, keyOverride = null, kind = "final") {
     const key = keyOverride || t.taskId;
     const item = {
@@ -157,6 +169,7 @@ export function createDelivery({ bus, manager, dataDir, log }) {
       entry,
       sessionPath: t.sessionPath || t.sessionRef?.path || null,
       timer: null,
+      waitTotal: 0,
       kind,
     };
     // 入队即置位（而非等到注入/超时才置）：
@@ -169,17 +182,29 @@ export function createDelivery({ bus, manager, dataDir, log }) {
       t._delivered = true;
     }
     pending.set(key, item);
-    item.timer = setTimeout(() => {
-      if (pending.get(key) !== item) return;
-      pending.delete(key);
-      logInfo(`[delivery] SYNC TIMEOUT ${key} (${kind}) → fallback`);
-      if (kind === "stall") {
-        t._stallDelivered = true;
-      } else {
-        deliverAsync(t, item.result).catch(() => {});
-      }
-    }, SYNC_WAIT_MS);
-    if (item.timer.unref) item.timer.unref();
+    const schedule = (ms) => {
+      item.timer = setTimeout(() => {
+        if (pending.get(key) !== item) return;
+        // 实时态判断：agent 还在 streaming（长任务/工具挂起）→ 续等，不强推;
+        // 已收束（不活跃）→ 立即兜底异步投递。
+        const active = sessionActive(item.sessionPath);
+        if (active === true && item.waitTotal < SYNC_MAX_WAIT_MS) {
+          item.waitTotal += ms;
+          logInfo(`[delivery] RESCHEDULE ${key} (${kind}): session active, keep waiting (${item.waitTotal}ms)`);
+          schedule(ms);
+          return;
+        }
+        pending.delete(key);
+        logInfo(`[delivery] SYNC TIMEOUT ${key} (${kind}) → fallback`);
+        if (kind === "stall") {
+          t._stallDelivered = true;
+        } else {
+          deliverAsync(t, item.result).catch(() => {});
+        }
+      }, ms);
+      if (item.timer.unref) item.timer.unref();
+    };
+    schedule(SYNC_WAIT_MS);
   }
 
   async function handleFinal(task) {
@@ -192,6 +217,16 @@ export function createDelivery({ bus, manager, dataDir, log }) {
 
     if (alreadyHandled(t)) {
       logInfo(`[delivery] skip ${taskId}: already delivered`);
+      return;
+    }
+
+    // stall 已投递过：任务停滞已通知 agent（“下载连接已停滞”）。
+    // 仅抑制被动终态（done/error/interrupted——是停滞的后果，agent 已知，不重复投递）。
+    // 例外：user 手动取消（canceledBy=user）是外界主动干预，agent 需要知道“用户打断了下载”，
+    // 必须恢复通知（否则 agent 不知道发生了什么）。
+    // 仅抑制已成功投递过的 stall（_stallDelivered=true）；stall 通知未投递成功（超时降级未消费）时终态仍需投递兜底。
+    if ((t._stallDelivered === true || t.stallNotified === true) && t.canceledBy !== "user") {
+      logInfo(`[delivery] skip ${taskId}: stall already delivered`);
       return;
     }
 
@@ -268,7 +303,6 @@ export function createDelivery({ bus, manager, dataDir, log }) {
     if (!payload || !Array.isArray(payload.messages) || pending.size === 0) return payload;
     const injected = [];
     for (const [key, item] of Array.from(pending)) {
-      try { fs.appendFileSync('D:/HanakoWorks/_temp/inject-content.log', `[${new Date().toISOString()}] key=${key} entry.content_head=${(item.entry.content||'').slice(0,220)}\n`); } catch {}
       const itemSession = item.sessionPath || item.task?.sessionPath || item.task?.sessionRef?.path;
       if (sessionPath && itemSession && !sameSession(sessionPath, itemSession)) continue;
       clearTimeout(item.timer);
