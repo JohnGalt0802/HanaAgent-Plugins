@@ -141,7 +141,7 @@ function buildEntry(taskId, result) {
 
 ## §6 最小验证步骤（agent 操作）
 
-1. agent 用 `download-file` 下载 `http://127.0.0.1:8899/dl-local-probe.bin` 到 `D:\HanakoWorks\_temp\probe-min.bin`。
+1. agent 用 `download-file` 下载 `http://127.0.0.1:8899/dl-local-probe.bin` 到 `<workspace>\_temp\probe-min.bin`。
 2. agent 保持会话不收束。
 3. agent 调 1 次 `download-wait`（保持回合，创造同步条件）。
 4. agent 收束。
@@ -161,7 +161,7 @@ function buildEntry(taskId, result) {
 dev 改完后，用 PowerShell 同步到宿主插件目录：
 
 ```powershell
-Copy-Item "D:\HanakoWorks\download-progress\lib\delivery.js" "C:\Users\John Galt\.hanako\plugins\download-progress\lib\delivery.js" -Force
+Copy-Item "<workspace>\download-progress\lib\delivery.js" "~/.hanako\plugins\download-progress\lib\delivery.js" -Force
 ```
 
 然后重启宿主，使改动生效。
