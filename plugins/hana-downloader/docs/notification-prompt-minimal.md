@@ -33,7 +33,7 @@
 +  const elapsed = elapsedMs === null ? null : `${elapsedMs}ms`;
 +  const action = status === "error" ? "decide" : "none";
 +  const errorCode = String(task.error || "").match(/\b\d{3}\b/)?.[0] || null;
-+  const meta = { source: "system", plugin: "download-progress", status, timestamp, elapsedMs, elapsed, action, errorCode };
++  const meta = { source: "system", plugin: "hana-downloader", status, timestamp, elapsedMs, elapsed, action, errorCode };
    if (state === "done") {
 -    return { ...base, filePath: task.filePath, total: task.total ?? null, received: task.received ?? 0 };
 +    return { ...base, ...meta, filePath: task.filePath, total: task.total ?? null, received: task.received ?? 0 };
@@ -54,7 +54,7 @@
 新增字段说明：
 
 - `source: "system"`：明确这是系统后台通知。
-- `plugin: "download-progress"`：明确来源插件。
+- `plugin: "hana-downloader"`：明确来源插件。
 - `status`：新语义 `done` / `error` / `cancelled`，与旧 `state` 解耦但保留旧 `state` 字段。
 - `timestamp`：ISO 字符串，优先取 `task.finishedAt`，缺失时取当前时间。
 - `elapsedMs`：`task.finishedAt - task.startedAt`，缺失为 `null`。
@@ -80,7 +80,7 @@
      url: t.url || "",
      state: statusOf(t),
 +    source: "system",
-+    plugin: "download-progress",
++    plugin: "hana-downloader",
 +    status: "stall",
 +    timestamp: new Date(now).toISOString(),
 +    action: "decide",
@@ -95,7 +95,7 @@
 
 新增字段说明：
 
-- `source: "system"`、`plugin: "download-progress"`：与终态通知同源标识。
+- `source: "system"`、`plugin: "hana-downloader"`：与终态通知同源标识。
 - `status: "stall"`：明确这是停滞通知，不再让 `state: "running"` 造成歧义。
 - `timestamp`：ISO 字符串，表示本次停滞通知生成时间。
 - `action: "decide"`：明确需要 agent 决策。
@@ -131,7 +131,7 @@ function buildEntry(taskId, result) {
 - 异步 `deferred:resolve` 路径里，宿主 `kst/vst/Est` 收到 result 时，result 已含 `source/plugin/status/timestamp/elapsed/action` 等新字段。
 - 异步 HBR 内层 JSON 自动带新字段（因为 `JSON.stringify` 会序列化整个 result 对象）。
 - agent 在新回合 input 里看到清晰通知：
-  - 有 `source=system`、`plugin=download-progress`，能识别“这是系统后台通知”而非工具返回值。
+  - 有 `source=system`、`plugin=hana-downloader`，能识别“这是系统后台通知”而非工具返回值。
   - 有 `status=done/cancelled/error/stall`，不再被外层 `status=success` 与内层 `state=running` 的旧组合误导。
   - 有 `timestamp`、`elapsed` 可判断通知新旧与耗时。
   - 有 `action=none/decide`，明确是否需要 agent 回应。
@@ -147,12 +147,12 @@ function buildEntry(taskId, result) {
 4. agent 收束。
 5. 异步 `triggerTurn` 唤醒 agent 开新一轮，agent 在 input 的 `background-result` JSON 里看到：
    - `source=system`
-   - `plugin=download-progress`
+   - `plugin=hana-downloader`
    - `status=done`
    - `timestamp`
    - `elapsed`
    - `action=none`
-6. 验证判据：agent 看到后台通知后明确说出“这是来自 download-progress 的下载完成通知，含 source=system, status=done, timestamp=..., elapsed=..., action=none”（不再困惑“后台 done 通知也到了”）。
+6. 验证判据：agent 看到后台通知后明确说出“这是来自 hana-downloader 的下载完成通知，含 source=system, status=done, timestamp=..., elapsed=..., action=none”（不再困惑“后台 done 通知也到了”）。
 
 ---
 
@@ -161,7 +161,7 @@ function buildEntry(taskId, result) {
 dev 改完后，用 PowerShell 同步到宿主插件目录：
 
 ```powershell
-Copy-Item "<workspace>\download-progress\lib\delivery.js" "~/.hanako\plugins\download-progress\lib\delivery.js" -Force
+Copy-Item "<workspace>\hana-downloader\lib\delivery.js" "~/.hanako\plugins\hana-downloader\lib\delivery.js" -Force
 ```
 
 然后重启宿主，使改动生效。
