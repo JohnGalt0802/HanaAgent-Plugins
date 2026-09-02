@@ -1,7 +1,7 @@
-# download-progress 插件 · 投递/通知机制全谱 & 版本演进审计报告
+# hana-downloader 插件 · 投递/通知机制全谱 & 版本演进审计报告
 
 > 落盘时间：2026-09-01
-> 范围：`<workspace>\download-progress` 全树（README / PROJECT_REQUIREMENTS / 踩坑记录 / lib / extensions / docs / patch）
+> 范围：`<workspace>\hana-downloader` 全树（README / PROJECT_REQUIREMENTS / 踩坑记录 / lib / extensions / docs / patch）
 > 目的：把插件所有"通知/投递"通道分门别类、看清面向谁、分清两条线（agent 消息 vs 前端视图）、摸清 v0.5.x → v0.9.x 演进脉络，并解释为何用户会在前端持续看到"同步投递"提示而 agent 侧感知不一致。
 
 ---
@@ -46,7 +46,7 @@
 **宿主协议**（`docs/sync-mechanism.md` §2.3 + `docs/six-quadrant-test.md` 顶部引文）：
 - `session:send-custom` 路由经 `deliverCustomMessage` → 非 streaming 分支走 `triggerTurn` → `sendCustomMessage({triggerTurn:true})` **主动触发一个新 turn**消费消息，emit `isStreaming:true`。
 - **不依赖 `isStreaming` 门**（不像 steer）；**不依赖 captured pi**（走 caller 校验 + sessionPath）。
-- 插件调用形态：`bus.request("session:send-custom", {sessionPath, customType:"hana-background-result", content, display:false, triggerTurn:true, details:{schemaVersion:1, taskId, canceledBy, userCanceled, ...}}, {caller:{pluginId:"download-progress"}})`
+- 插件调用形态：`bus.request("session:send-custom", {sessionPath, customType:"hana-background-result", content, display:false, triggerTurn:true, details:{schemaVersion:1, taskId, canceledBy, userCanceled, ...}}, {caller:{pluginId:"hana-downloader"}})`
 - 返回 `{ok:true, mode:"triggerTurn"}` 视为已投递。
 
 **位置**：`extensions/dl-nextturn.js` `steerViaBus()` 第一个 `bus.request("session:send-custom", ...)` 块。
@@ -353,4 +353,4 @@ handleStall(task)
 
 ---
 
-*作者：audit · 基于 `<workspace>\download-progress` 全树实证（2026-09-01）*
+*作者：audit · 基于 `<workspace>\hana-downloader` 全树实证（2026-09-01）*
