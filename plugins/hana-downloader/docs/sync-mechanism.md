@@ -2,7 +2,7 @@
 
 > 落盘时间：2026-09-01
 > 目的：记录"同回合同步投递"在宿主 0.769→0.810 升级中的机制差异，作为魔改（pi + 宿主双改）的依据。
-> 依据：源码走读（`artifacts/server/{0.769.0,0.810.0}-win32-x64/bundle/index.js`）+ 实测（`D:/HanakoWorks/_temp/nextturn.log`）。
+> 依据：源码走读（`artifacts/server/{0.769.0,0.810.0}-win32-x64/bundle/index.js`）+ 实测（`<workspace>/_temp/nextturn.log`）。
 
 ---
 
