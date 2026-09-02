@@ -43,11 +43,11 @@
 
 | agent 状态 | 投递路径 | agent 感知时机 |
 |---|---|---|
-| 未收束 + 下一条 API 调用 ≤ 30s | **真同步**：bundle 魔改暴露 `__sessionHooks`，插件注册 `agent/pre-step` adjudicator（order 999），HBR 推 `payload.messages` | **当前轮** LLM API messages 看到 HBR |
-| 未收束 + 超 30s 未发新 API | 异步兜底：timer 触发 `deliverAsync` → `deferred:resolve` → host followUp 入队 | 下一轮 input 看到 HBR |
+| 未收束 | **真同步**：bundle 魔改暴露 `__sessionHooks`，插件注册 `agent/pre-step` adjudicator（order 999），HBR 推 `payload.messages` | **当前轮** LLM API messages 看到 HBR |
+| 未收束但 agent 做长任务（>30s 无 API）| **主动投递**：enqueueSync 超时用 session 实时态判断（`isSessionActive`），agent 活跃则 RESCHEDULE 续等，agent 发 API 时注入 | agent 后续 API 调用注入 |
 | 已收束 | 异步 triggerTurn：host `deliverCustomMessage` → triggerTurn 立即开新 turn | 新 turn input 看到 HBR |
 
-完整机制见 `docs/v0.11.0-真同步投递完整机制.md`（HBR 7 属性 / 4 commit 修复链 / 三种时机表）。
+完整机制见 `docs/v0.11.0-真同步投递完整机制.md`（HBR 7 属性 / 4 commit 修复链 / 主动投递 / 三种时机表）。
 
 ### 真同步部署前置（必要）
 
@@ -58,7 +58,7 @@
 globalThis.__sessionHooks = j;
 ```
 
-宿主升级后必须重做魔改（备份 `D:\HanakoWorks\_temp\bundle-index.js.0.814.0-魔改前.bak`）。未魔改时 plugin 静默降级为纯异步 triggerTurn 路径。
+宿主升级后必须重做魔改（升级前备份 bundle/index.js 到本地临时目录）。未魔改时 plugin 静默降级为纯异步 triggerTurn 路径。
 
 ### HBR 根标签 7 属性
 
@@ -126,7 +126,7 @@ globalThis.__sessionHooks = j;
 ```
 manifest.json                插件声明（full-access）
 index.js                     生命周期：onload 注册 agent/pre-step adjudicator（order 999）+ 遗留任务恢复
-lib/delivery.js              投递权威：tailSettled / buildEntry 7 属性 / enqueueSync / injectForSession / deliverAsync
+lib/delivery.js              投递权威：tailSettled / buildEntry 7 属性 / enqueueSync(主动投递实时态) / injectForSession / deliverAsync
 lib/dlcore.js                任务管理器：流式下载/测速/限速/停滞监测/onceFinal/canceledBy/consumedByWait/持久化
 lib/deferred.js              deferred 占位 helper（register/resolve + 全局 bus 兜底）
 lib/progress-parsers.js      git/pnpm 输出解析（纯函数）
@@ -147,20 +147,18 @@ docs/v0.11.0-真同步投递完整机制.md   完整机制文档（落地）
 ```powershell
 # 1. 备份 bundle（重做魔改前恢复）
 $bundle = "$env:USERPROFILE\.hanako\artifacts\server\0.814.0-win32-x64\bundle\index.js"
-Copy-Item $bundle "D:\HanakoWorks\_temp\bundle-index.js.0.814.0-魔改前.bak" -Force
+Copy-Item $bundle "$env:TEMP\bundle-index.js.魔改前.bak" -Force
 
 # 2. 在 bundle/index.js 第 171120 行附近加一行：
 #    globalThis.__sessionHooks = j;
 #    （plugin index.js onload 通过 globalThis.__sessionHooks 注册 adjudicator）
 
 # 3. 重启宿主
-pwsh -File D:\HanakoWorks\_tools\restart-hana\restart-hana-reliable.ps1
+pwsh -File <你的重启脚本路径>\restart-hana-reliable.ps1
 ```
 
 **调试日志**（运行时写，不影响功能）：
-- `D:\HanakoWorks\_temp\inject-content.log`：injectForSession 实际注入的 content 头部
-- `D:\HanakoWorks\_temp\inject-debug.log`：injectForSession 入口 + pending.size + 匹配
-- `D:\HanakoWorks\_temp\stall-debug.log`：onload / adjudicator called / injected 计数
+- 插件数据目录 `stall-debug.log`：onload / adjudicator called / injected 计数
 
 ---
 
