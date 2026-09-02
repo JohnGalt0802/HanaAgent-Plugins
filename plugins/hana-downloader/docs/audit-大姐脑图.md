@@ -1,4 +1,4 @@
-# 大姐内部脑图：download-progress 投递机制重估（2026-09-01 并行挖矿期间）
+# 大姐内部脑图：hana-downloader 投递机制重估（2026-09-01 并行挖矿期间）
 
 ## 用户的核心质疑（必须正面回应）
 - "从旧前端做到新前端，功能不断完善，不可能就这么失效了。"
@@ -18,7 +18,7 @@
   - registerDeferred 占位注册（任务创建即占位，终态时 resolve 投递 hana-background-result 唤醒 agent）
   - manager.onStall 停滞提醒（动态注册 taskId:stall 占位并立即解析）
   - 遗留终态兜底（+6s 串行化，对账宿主 store，防跨重启双投）
-  - onload 结尾 log: "download-progress v0.9.0 loaded (downloads → ...)"
+  - onload 结尾 log: "hana-downloader v0.9.0 loaded (downloads → ...)"
 - extensions/dl-nextturn.js（投递权威，最核心）：
   - pi.on 订阅工具/会话事件，captureSession 抓 currentSessionId/Path
   - ownThisSession(task)：判任务是否归属当前会话（比较 sessionPath 文件名）
