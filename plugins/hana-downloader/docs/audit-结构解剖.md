@@ -1,7 +1,7 @@
 # download-progress 插件 · 结构解剖报告
 
 > 落盘时间：2026-09-01（会话快照内的当前装机版）
-> 审视对象：`D:\HanakoWorks\download-progress\`（dev 槽 sourcePath，运行拷贝在 `C:\Users\John Galt\.hanako\plugins-dev\download-progress`）
+> 审视对象：`<workspace>\download-progress\`（dev 槽 sourcePath，运行拷贝在 `~/.hanako\plugins-dev\download-progress`）
 > 审视方式：只读通读所有源码 + docs/* + 顶层文档，逐处标注关键机制的文件/函数/注释位置。
 
 ---
@@ -562,7 +562,7 @@ function wire(taskId, task) {
    │                                                                │ restore/_persist│
    │                                                                └─────────────────┘
    │                                                                        ↓
-   │                                                       D:\HanakoWorks\...\.hanako\plugin-data\
+   │                                                       <workspace>\...\.hanako\plugin-data\
    │                                                       download-progress\{tasks.json, config.json,
    │                                                       speed-cache.json, downloads\}
    └────────────────────────────────────────────────────────────────────────────────────────────┘
