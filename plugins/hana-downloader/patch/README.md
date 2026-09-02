@@ -67,11 +67,11 @@ window.addEventListener("message", function (ev) {
    默认打两条 renderer；也可显式传路径。
 3. **验证语法**：
    ```powershell
-   node --check C:\Users\John Galt\.hanako\artifacts\renderer\0.680.21\lib\theme.js
+   node --check ~\.hanako\artifacts\renderer\0.680.21\lib\theme.js
    ```
 4. **重启 hana-server**（让 theme.js + 插件加载）：
    ```powershell
-   pwsh -File D:\HanakoWorks\_tools\restart-hana\restart-hana-reliable.ps1
+   pwsh -File <你的重启脚本目录>\restart-hana\restart-hana-reliable.ps1
    ```
 5. **插件侧确认**：`app/manager.js`、`app/card.js` 含 `hana.theme.changed` 监听；`manager.css`/`card.css` 为自包含两套色板。
 
