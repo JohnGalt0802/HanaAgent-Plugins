@@ -10,7 +10,7 @@
 
 ### 1.1 卡片声明（manifest.json）
 
-`D:\HanakoWorks\download-progress\manifest.json` L31-53 声明两张 webview 卡片：
+`<workspace>\download-progress\manifest.json` L31-53 声明两张 webview 卡片：
 
 ```json
 "contributes": {
@@ -29,7 +29,7 @@
 
 ### 1.2 卡片前端 card.js 的实际行为
 
-`D:\HanakoWorks\download-progress\app\card.js` 是一个 iframe webview 卡片，纯**轮询 + 渲染**模型：
+`<workspace>\download-progress\app\card.js` 是一个 iframe webview 卡片，纯**轮询 + 渲染**模型：
 
 - **数据源**：每 600 ms 调一次 `apiFetch("/download/status?taskId=...")` 拿任务快照（L175 `timer = setInterval(poll, 600)`；L148-167 `poll()` 函数）。
 - **渲染**：L248-405 `render(t)` 把状态机 `t.state ∈ {pending, running, done, failed, canceled, interrupted}` 渲染成 DOM。`stateBadge()` L419 把状态映射成中文「下载中/准备中/完成/失败/已取消/已中断/停滞」。
@@ -42,7 +42,7 @@
 
 ### 1.3 卡片前端 manager.js 的实际行为
 
-`D:\HanakoWorks\download-progress\app\manager.js` 同款模式：
+`<workspace>\download-progress\app\manager.js` 同款模式：
 
 - **数据源**：每 3000 ms 调 `apiFetch("/download/list")` 拿跨会话任务列表（L33 `POLL_MS = 3000`，L420-444 `poll()`）
 - **渲染**：L165-273 `render()` 列出任务行；L184-194 行背景按百分比填充
@@ -72,7 +72,7 @@
 
 ### 2.1 「大姐收到了来自 {source} 工具的结果」是宿主内置 i18n 文案
 
-`C:\Users\John Galt\.hanako\artifacts\server\0.814.0-win32-x64\desktop\src\locales\zh.json` L4161-4170：
+`~/.hanako\artifacts\server\0.814.0-win32-x64\desktop\src\locales\zh.json` L4161-4170：
 
 ```json
 "deferred": {
@@ -377,8 +377,8 @@ function JSt({ status, result, reason }) {
 
 | 证据 | 位置 |
 |---|---|
-| 插件前端从不 emit / track | `D:\HanakoWorks\download-progress\app\card.js`、`app\manager.js` 全文件 grep "emit\|track\|customType" 仅命中主题色 message 监听，无功能性调用 |
-| 插件 manifest 没声明 `messageRenderers` | `D:\HanakoWorks\download-progress\manifest.json` grep "messageRenderers" 0 匹配 |
+| 插件前端从不 emit / track | `<workspace>\download-progress\app\card.js`、`app\manager.js` 全文件 grep "emit\|track\|customType" 仅命中主题色 message 监听，无功能性调用 |
+| 插件 manifest 没声明 `messageRenderers` | `<workspace>\download-progress\manifest.json` grep "messageRenderers" 0 匹配 |
 | `dl-nextturn.js` 主投递协议 | `extensions/dl-nextturn.js` L122-148 `steerViaBus` 内 `bus.request("session:send-custom", {customType:"hana-background-result", display:false, triggerTurn:true, ...})` |
 | 投递 content 形态 | `extensions/dl-nextturn.js` L334 `content = <hana-background-result status="..." type="download" task-id="..." canceled-by="..." user-canceled="...">下载完成：${fileName}</hana-background-result>` |
 | 宿主内置 `hana-background-result` 常量 | `bundle/index.js` L18134 `const ky = "hana-background-result"` |
@@ -386,7 +386,7 @@ function JSt({ status, result, reason }) {
 | 宿主 interlude 构造 | `bundle/index.js` L49164-49187 `VRe` 函数返回 `{type:"interlude", variant:"deferred_result", text: XSt(...), detailMarkdown}` |
 | 宿主 interlude 文案 i18n | `desktop/src/locales\zh.json` L4161-4170 `deferred.interlude.tool.success = "{receiver} 收到了来自 {source} 工具的结果"` |
 | 注入 stream 路径 | `bundle/index.js` L50211 `ut` → L50089 `H` → WS content_block event |
-| SDK / 协议层面对照 | `D:\HanakoWorks\_temp\sdk-814\hana-plugin-protocol-0.0.0\package\dist\index.d.ts` L373 `PLUGIN_V2_MANIFEST_CONTRIBUTES_KEYS = [..., "messageRenderers"]`；L430 `PLUGIN_V2_MESSAGE_RENDERER_CONTRIBUTION_KEYS = ["customType", "cardId"]` —— 这是宿主 v2 协议层定义的「customType → cardId」通道，本插件没用到 |
+| SDK / 协议层面对照 | `<workspace>\_temp\sdk-814\hana-plugin-protocol-0.0.0\package\dist\index.d.ts` L373 `PLUGIN_V2_MANIFEST_CONTRIBUTES_KEYS = [..., "messageRenderers"]`；L430 `PLUGIN_V2_MESSAGE_RENDERER_CONTRIBUTION_KEYS = ["customType", "cardId"]` —— 这是宿主 v2 协议层定义的「customType → cardId」通道，本插件没用到 |
 
 ### 5.5 一句话总结
 
