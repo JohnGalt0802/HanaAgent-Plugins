@@ -2,7 +2,7 @@
 
 > 落盘时间：2026-09-01
 > 版本：0.9.3 → 0.10.0（v2 契约 = 大版本变更）
-> 目的：升级 download-progress 到 v2 插件契约，解决 sync-first 双投 bug（stallKey 走
+> 目的：升级 hana-downloader 到 v2 插件契约，解决 sync-first 双投 bug（stallKey 走
 > triggerTurn 异步通道 + done 走 steer 同步通道 → 双投）。
 > 依据：宿主 0.814.0 `bundle/index.js`（**运行中的宿主**，`.verified` 已激活、`hana-server.cmd`
 > 加载该 bundle）+ `app-host-entry.js` + `skills2set/hana-plugin-creator` 官方 v2 脚手架
@@ -71,7 +71,7 @@ send-custom → deferred 逐级防御，任何一级被拒都有日志可查）�
 // v2（新，本插件）
 {
   "manifestVersion": 2,          // 宿主 LBt：必须恰为 2
-  "id": "download-progress",     // 必须等于目录名（apps/download-progress/）
+  "id": "hana-downloader",     // 必须等于目录名（apps/hana-downloader/）
   "name": "Hana Download Manager",
   "version": "0.10.0",
   "description": "...",
@@ -243,7 +243,7 @@ handleFinal / handleStall
    上静默失效（各函数 try/catch + 日志，不阻断投递主通道）。
 4. **tailSettled 在 v2 子进程恒 false**（读不到会话 jsonl）→ 一律先试 steer 通道；收束会话由
    send-custom triggerTurn / session:send 桌面消息兜底，语义与 v1 的"收束走异步"一致。
-5. **v2 插件安装位置**：`<hanakoHome>/apps/download-progress/`（不是 `plugins/`），且需用户
+5. **v2 插件安装位置**：`<hanakoHome>/apps/hana-downloader/`（不是 `plugins/`），且需用户
    在 Settings → Apps 批准安装 + 授权（`app/session.start-turn` 等能力闸，`zf()` 校验）。
 6. **未迁移项**（§4.4）会导致 v2 下暂无下载工具 / 卡片 / 路由——本版本仅交付投递层升级。
 
