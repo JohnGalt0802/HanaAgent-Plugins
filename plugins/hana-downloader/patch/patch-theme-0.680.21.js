@@ -36,12 +36,12 @@ function patchTheme(p) {
 
 const args = process.argv.slice(2);
 if (!args.length) {
-  const base = "C:/Users/John Galt/.hanako/artifacts/";
+  const base = require("node:os").homedir() + "/.hanako/artifacts/";
   const paths = [
     base + "renderer/0.680.21/lib/theme.js",
     base + "server/0.680.21-win32-x64/desktop/dist-renderer/lib/theme.js",
   ];
-  console.log("未传路径，使用默认两条 renderer：");
+  console.log("未传路径，使用默认两条 renderer：", base);
   paths.forEach(p => patchTheme(p));
 } else {
   args.forEach(p => patchTheme(p));
