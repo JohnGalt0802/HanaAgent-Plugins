@@ -13,12 +13,13 @@ import { getTaskManager } from "./lib/dlcore.js";
 import { registerHandler } from "./lib/registry.js";
 import { createDelivery } from "./lib/delivery.js";
 import fs from "node:fs";
+import path from "node:path";
 
 export default class DownloadProgressPlugin {
   onload() {
     const { dataDir, bus, log } = this.ctx;
-    // 无条件诊断：确认 onload 执行 + globalThis.__sessionHooks 状态（写 stall-debug.log）
-    const dbgLog = (s) => { try { fs.appendFileSync('D:/HanakoWorks/_temp/stall-debug.log', `[${new Date().toISOString()}] ${s}\n`); } catch {} };
+    // 诊断日志：写在插件数据目录下（不硬编码本机路径），确认 onload 执行 + __sessionHooks 状态
+    const dbgLog = (s) => { try { fs.appendFileSync(path.join(dataDir, 'stall-debug.log'), `[${new Date().toISOString()}] ${s}\n`); } catch {} };
     dbgLog(`DBG onload entered | sessionHooks=${typeof globalThis.__sessionHooks} | bus=${typeof bus}`);
     try {
       const manager = getTaskManager(dataDir);
