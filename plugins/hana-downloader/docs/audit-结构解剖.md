@@ -1,7 +1,7 @@
-# download-progress 插件 · 结构解剖报告
+# hana-downloader 插件 · 结构解剖报告
 
 > 落盘时间：2026-09-01（会话快照内的当前装机版）
-> 审视对象：`<workspace>\download-progress\`（dev 槽 sourcePath，运行拷贝在 `~/.hanako\plugins-dev\download-progress`）
+> 审视对象：`<workspace>\hana-downloader\`（dev 槽 sourcePath，运行拷贝在 `~/.hanako\plugins-dev\hana-downloader`）
 > 审视方式：只读通读所有源码 + docs/* + 顶层文档，逐处标注关键机制的文件/函数/注释位置。
 
 ---
@@ -9,7 +9,7 @@
 ## 0. 目录树速览（仅当前装机真实存在的文件）
 
 ```
-download-progress/
+hana-downloader/
 ├── .gitignore
 ├── README.md
 ├── PROJECT_REQUIREMENTS.md
@@ -46,7 +46,7 @@ download-progress/
     └── sync-mechanism.md
 ```
 
-**用户列出的 `tools/dl-native-probe.js` 在当前装机版本中不存在**——`grep -r dl-native-probe download-progress/` 零命中。最可能历史身份：`dl-recon.js`（侦察脚本）即其职能替身；最终方案已被 `extensions/dl-nextturn.js` 内部的 800ms 轮询 + `onFinal` 取代，独立探测脚本无存在必要。
+**用户列出的 `tools/dl-native-probe.js` 在当前装机版本中不存在**——`grep -r dl-native-probe hana-downloader/` 零命中。最可能历史身份：`dl-recon.js`（侦察脚本）即其职能替身；最终方案已被 `extensions/dl-nextturn.js` 内部的 800ms 轮询 + `onFinal` 取代，独立探测脚本无存在必要。
 
 ---
 
@@ -66,7 +66,7 @@ download-progress/
    - 注册 `type="download"` 的 abort 回调：宿主 `stop_task` 调用时调 `manager.cancel(taskId, "user")`，统一取消链路（`source:"user"`）
 
 3. **打印加载日志**
-   - `log.info(`download-progress v0.9.0 loaded (downloads → ${manager.downloadDir})`)` —— 见 §7 版本号讨论
+   - `log.info(`hana-downloader v0.9.0 loaded (downloads → ${manager.downloadDir})`)` —— 见 §7 版本号讨论
 
 4. **停滞占位托管（onStall IIFE）**
    - `manager.onStall((task) => { ... })` —— `index.js:51-71`
@@ -306,7 +306,7 @@ async function steerViaBus(bus, pi, t, content, details) {
   bus.request("session:send-custom", {
     sessionPath, customType:"hana-background-result", content, display:false,
     triggerTurn:true, details: { schemaVersion:1, ...details }
-  }, { caller: { pluginId:"download-progress" } })  // 归属要求 caller 非 plugin kind
+  }, { caller: { pluginId:"hana-downloader" } })  // 归属要求 caller 非 plugin kind
   → res.ok && (mode==="triggerTurn" || mode==="followUp") → "delivered"
 
   // ② 备用：pi.sendMessage（仅 pi 有效时）
@@ -563,7 +563,7 @@ function wire(taskId, task) {
    │                                                                └─────────────────┘
    │                                                                        ↓
    │                                                       <workspace>\...\.hanako\plugin-data\
-   │                                                       download-progress\{tasks.json, config.json,
+   │                                                       hana-downloader\{tasks.json, config.json,
    │                                                       speed-cache.json, downloads\}
    └────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -615,7 +615,7 @@ function wire(taskId, task) {
 |---|---|---|
 | `package.json` | `"version": "0.9.0"` | 装机 source code 顶部权威 |
 | `manifest.json` | `"version": "0.9.0"` | 宿主加载插件时读此字段 |
-| `index.js:log.info` | `download-progress v0.9.0 loaded (downloads → ${...})` | 实际启动日志 |
+| `index.js:log.info` | `hana-downloader v0.9.0 loaded (downloads → ${...})` | 实际启动日志 |
 | `README.md` 头部 | **"当前版本：v0.9.2"** | 文档声明 |
 | `PROJECT_REQUIREMENTS.md §10` | "下一步（本轮遗留）：版本 bump 到 v0.9.2，打包" | **明确标注 v0.9.2 是未完成的下一步** |
 | `extensions/dl-nextturn.js` 注释 | "v0.9.1 死磕" / "v0.8.5" / "v0.8.9" / "v0.8.7" "v0.8.2" "v0.8.3" "v0.8.4" "v0.8.6" "v0.8.9b" "v0.8.9c" | **内部修改点历史注释，非版本号字段** |
@@ -648,4 +648,4 @@ function wire(taskId, task) {
 
 ## 8. 一句话总结（用户要的 200 字结论）
 
-当前装机 `download-progress v0.9.0`：单进程级 `TaskManager` 单例（`dlcore.js`，49.9KB HTTP/Range/SHA256/限速/停滞/持久化），按 Manifest 暴露两个 webview（`/card/download`、`/manager`）+ 四个 LLM 工具（`download-file/-command/-wait/-cancel`）。**投递是双通道机制**：`extensions/dl-nextturn.js` 是未收束侧主通道（`session:send-custom+triggerTurn` 同回合 steer，pi stale 时降级）和收束侧异步通道（`deferred:resolve` + confirm+retry + `pendingWake` 队列），以 `_delivered/markDelivered/delivered/store-delivered` 四层旗防双投；`lib/deferred.js` 是占位 helper（register+竞态补 resolve+consumedByWait 静默），`lib/registry.js` 双注册 `task:register/complete/cancel/fail` 让宿主 `stop_task` 可取消。`lib/progress-parsers.js` 给 git/pnpm 命令型任务做 stdout 解析。`index.js onload` 跑遗留 interrupted 恢复 + `mgr.onStall` 兜底占位托管 + 6s 兑底扫描（与扩展按 2s/6s 串行化分工防双投）。UI 是自包含 iframe（`card.js` 单任务轮询 600ms、`manager.js` 跨会话轮询 3s + 筛选 + 搜索 + reveal + 默认目录设置），自包含浅/深色板跟随宿主（依赖 `patch/patch-theme-0.680.21.js` 给宿主 theme.js 加的广播）。无第三方依赖、纯 Node 18+ + vanilla JS。版本号 `package.json`/`manifest.json`/`log.info` 三方均为 0.9.0；README/REQUIREMENTS 提到的 0.9.2 是已规划的下一站（投递层收敛为 host-native-first + 全量六象限回归，详见 `docs/six-quadrant-test.md` 与 `docs/sync-mechanism.md`）。用户提的 `tools/dl-native-probe.js` 当前目录不存在，零 grep 命中，最可能是 `tools/dl-recon.js` 在迭代中的代号，`dl-nextturn.js` 内部 800ms 轮询已完全替代它的职能。
+当前装机 `hana-downloader v0.9.0`：单进程级 `TaskManager` 单例（`dlcore.js`，49.9KB HTTP/Range/SHA256/限速/停滞/持久化），按 Manifest 暴露两个 webview（`/card/download`、`/manager`）+ 四个 LLM 工具（`download-file/-command/-wait/-cancel`）。**投递是双通道机制**：`extensions/dl-nextturn.js` 是未收束侧主通道（`session:send-custom+triggerTurn` 同回合 steer，pi stale 时降级）和收束侧异步通道（`deferred:resolve` + confirm+retry + `pendingWake` 队列），以 `_delivered/markDelivered/delivered/store-delivered` 四层旗防双投；`lib/deferred.js` 是占位 helper（register+竞态补 resolve+consumedByWait 静默），`lib/registry.js` 双注册 `task:register/complete/cancel/fail` 让宿主 `stop_task` 可取消。`lib/progress-parsers.js` 给 git/pnpm 命令型任务做 stdout 解析。`index.js onload` 跑遗留 interrupted 恢复 + `mgr.onStall` 兜底占位托管 + 6s 兑底扫描（与扩展按 2s/6s 串行化分工防双投）。UI 是自包含 iframe（`card.js` 单任务轮询 600ms、`manager.js` 跨会话轮询 3s + 筛选 + 搜索 + reveal + 默认目录设置），自包含浅/深色板跟随宿主（依赖 `patch/patch-theme-0.680.21.js` 给宿主 theme.js 加的广播）。无第三方依赖、纯 Node 18+ + vanilla JS。版本号 `package.json`/`manifest.json`/`log.info` 三方均为 0.9.0；README/REQUIREMENTS 提到的 0.9.2 是已规划的下一站（投递层收敛为 host-native-first + 全量六象限回归，详见 `docs/six-quadrant-test.md` 与 `docs/sync-mechanism.md`）。用户提的 `tools/dl-native-probe.js` 当前目录不存在，零 grep 命中，最可能是 `tools/dl-recon.js` 在迭代中的代号，`dl-nextturn.js` 内部 800ms 轮询已完全替代它的职能。
