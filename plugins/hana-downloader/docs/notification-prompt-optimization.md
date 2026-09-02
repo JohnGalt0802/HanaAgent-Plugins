@@ -1,7 +1,7 @@
 # download-progress 后台通知 Prompt 模板调研与优化草案
 
 > 日期：2026-09-02  
-> 范围：仅调研 dev 源 `D:\HanakoWorks\download-progress` + 宿主 bundle `0.814.0`，产出优化草案，不改代码。  
+> 范围：仅调研 dev 源 `<workspace>\download-progress` + 宿主 bundle `0.814.0`，产出优化草案，不改代码。  
 > 核心判据：以 agent 在下一轮提示词（`payload.messages` / jsonl `custom_message`）里实际看到的字符串为准，不依赖日志。
 
 ---
@@ -56,7 +56,7 @@ content: `<hana-background-result task-id="${esc(taskId)}" status="${status}" ty
   &quot;fileName&quot;: &quot;dl-sync-new-sess.bin&quot;,
   &quot;state&quot;: &quot;done&quot;,
   &quot;consumedByWait&quot;: false,
-  &quot;filePath&quot;: &quot;D:\\HanakoWorks\\_temp\\dl-sync-new-sess.bin&quot;,
+  &quot;filePath&quot;: &quot;\<workspace>\\_temp\\dl-sync-new-sess.bin&quot;,
   &quot;total&quot;: 1024,
   &quot;received&quot;: 1024
 }
@@ -111,7 +111,7 @@ content: `<hana-background-result task-id="${esc(taskId)}" status="${status}" ty
 ## §2 agent 实际看到的（jsonl 引用）
 
 文件：  
-`C:\Users\John Galt\.hanako\agents\hanako\sessions\2026-09-01T18-42-22-560Z_01a05e47-8ce0-78d3-aa63-031d1f13759c.jsonl`
+`~/.hanako\agents\hanako\sessions\2026-09-01T18-42-22-560Z_01a05e47-8ce0-78d3-aa63-031d1f13759c.jsonl`
 
 ### 2.1 本地快速下载任务 `9ab2a343-mtje3805`
 
@@ -185,14 +185,14 @@ agent 在提示词里看到的 HBR 就是 §1.3 那段 XML-like 字符串。宿�
 task-id: 9ab2a343-mtje3805
 type: download
 status: done
-file-path: D:\HanakoWorks\_temp\dl-local-probe-dl.bin
+file-path: <workspace>\_temp\dl-local-probe-dl.bin
 bytes: 262144 / 262144
 elapsed: 0.35s
 [无需回应]
 {
   "taskId": "9ab2a343-mtje3805",
   "fileName": "dl-local-probe-dl.bin",
-  "filePath": "D:\\HanakoWorks\\_temp\\dl-local-probe-dl.bin",
+  "filePath": "\<workspace>\\_temp\\dl-local-probe-dl.bin",
   "total": 262144,
   "received": 262144,
   "elapsedMs": 350,
@@ -216,7 +216,7 @@ elapsed: 0.35s
 task-id: ab12cd34-mtje9999
 type: download
 status: error
-file-path: D:\HanakoWorks\_temp\failed-download.bin (未完成，保留 .part)
+file-path: <workspace>\_temp\failed-download.bin (未完成，保留 .part)
 bytes: 524288 / 1048576
 elapsed: 12.4s
 error-code: HTTP_404
@@ -225,7 +225,7 @@ error-message: HTTP 404 Not Found
 {
   "taskId": "ab12cd34-mtje9999",
   "fileName": "failed-download.bin",
-  "filePath": "D:\\HanakoWorks\\_temp\\failed-download.bin",
+  "filePath": "\<workspace>\\_temp\\failed-download.bin",
   "total": 1048576,
   "received": 524288,
   "elapsedMs": 12400,
@@ -285,7 +285,7 @@ stalled-at: 2026-09-02T00:52:42.984Z
 task-id: aa11bb22-mtje7777
 type: download
 status: cancelled
-file-path: D:\HanakoWorks\_temp\user-cancelled.bin (.part 可能保留)
+file-path: <workspace>\_temp\user-cancelled.bin (.part 可能保留)
 bytes: 2048 / 1048576
 elapsed: 3.1s
 canceled-by: user
@@ -293,7 +293,7 @@ canceled-by: user
 {
   "taskId": "aa11bb22-mtje7777",
   "fileName": "user-cancelled.bin",
-  "filePath": "D:\\HanakoWorks\\_temp\\user-cancelled.bin",
+  "filePath": "\<workspace>\\_temp\\user-cancelled.bin",
   "state": "canceled",
   "canceledBy": "user",
   "userCanceled": true,
