@@ -51,7 +51,7 @@
 - 发起下载：`download-progress_download-file`（URL + fileName + 可选 speedLimit）
 - 取消下载：`download-progress_download-cancel`（taskId）
 - 查询状态：`download-progress_download-wait`（taskId，主动回查）
-- 检查宿主投递：查 `C:\Users\John Galt\.hanako\.ephemeral\deferred-tasks.json` 中该 taskId 的 `status` / `delivered` / `deliverySuppressed` / `result.state`
+- 检查宿主投递：查 `~/.hanako\.ephemeral\deferred-tasks.json` 中该 taskId 的 `status` / `delivered` / `deliverySuppressed` / `result.state`
 - 测试源：
   - 快速完成：`https://proof.ovh.net/files/1Mb.dat`（小文件，不限速）
   - 慢速完成/取消：`https://proof.ovh.net/files/100Mb.dat`（大文件 + `speedLimit` 如 400000，约十几分钟）
@@ -144,7 +144,7 @@ received 回执数（回合内/收束后）：
 
 ```python
 import json
-d = json.load(open(r'C:/Users/John Galt/.hanako/.ephemeral/deferred-tasks.json', encoding='utf-8'))
+d = json.load(open(r'~/.hanako/.ephemeral/deferred-tasks.json', encoding='utf-8'))
 v = d.get('<TASK_ID>')
 print('status:', v.get('status'), '| delivered:', v.get('delivered'),
       '| suppressed:', v.get('deliverySuppressed'))
@@ -204,7 +204,7 @@ print('status:', v.get('status'), '| delivered:', v.get('delivered'),
 
 ## 5-b. 实测基线（community 源 v0.9.3 sync-first，2026-09-01）
 
-测试环境：宿主 0.814.0，community 源 `C:\Users\John Galt\.hanako\plugins\download-progress` 加载 v0.9.3 sync-first delivery（manifest 仍是 0.9.2，代码已 0.9.3），dev 槽已卸载（单版本避免多 plugin 回调累积）。本次实测为完整六象限重测基线。
+测试环境：宿主 0.814.0，community 源 `~/.hanako\plugins\download-progress` 加载 v0.9.3 sync-first delivery（manifest 仍是 0.9.2，代码已 0.9.3），dev 槽已卸载（单版本避免多 plugin 回调累积）。本次实测为完整六象限重测基线。
 
 ### 关键发现
 
