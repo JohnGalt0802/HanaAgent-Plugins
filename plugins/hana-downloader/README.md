@@ -162,4 +162,4 @@ pwsh -File <你的重启脚本路径>\restart-hana-reliable.ps1
 
 ---
 
-*作者：John Galt · dahua · hanako*
+*作者：John Galt*
