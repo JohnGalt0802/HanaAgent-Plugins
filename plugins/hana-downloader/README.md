@@ -1,0 +1,167 @@
+# Hana Downloader · 小花下载器
+
+> 插件 ID：`hana-downloader` · 中文名：小花下载器 · 为 HanaAgent 提供**可观测下载**（observable download）能力：
+> 下载任务实时可视化、进度状态可查询、中途可干预、终态可靠通知。
+> 同时提供命令型下载（git clone / pnpm install）与跨会话下载管理器。
+
+- 当前版本：v0.11.0
+- 权限要求：full-access
+- 运行环境：HanaAgent ≥ 0.810.0（推荐 0.814.0，需 host bundle 魔改）
+
+---
+
+## 一、核心架构
+
+插件分为三层，各层职责单一、通过明确契约衔接：
+
+```
+┌─────────────────────────────────────────────────────┐
+│  展示层                                              │
+│  ├─ 进度卡片（聊天流内嵌 webview，600ms 轮询刷新）    │
+│  └─ 跨会话管理器（/manager，集中管控全部会话的任务）   │
+├─────────────────────────────────────────────────────┤
+│  工具层（LLM 消费的四个工具）                         │
+│  ├─ download-file     URL 下载（返回卡片 + taskId）   │
+│  ├─ download-command  命令型下载（git clone/pnpm）    │
+│  ├─ download-wait     回查（立即快照，不阻塞）        │
+│  └─ download-cancel   取消（来源签名 user/agent）     │
+├─────────────────────────────────────────────────────┤
+│  数据层（lib/dlcore.js 任务管理器）                    │
+│  流式下载 · 测速 · 限速 · 停滞监测 · 终态事件 · 持久化  │
+└─────────────────────────────────────────────────────┘
+```
+
+**层间契约**：
+
+- 工具层 → 展示层：工具返回值携带 `details.card`（webview 卡片描述），宿主将其渲染在工具块正下方；卡片前端以 600ms 周期轮询 `/download/status` 刷新。
+- 数据层 → 工具层：`onceFinal(taskId)` 提供终态一次性等待原语；`onFinal/onStall` 回调驱动投递分流。
+- 工具层 → 宿主：`deferred:register/resolve` 总线通道承载跨回合投递。
+
+## 二、核心机制：v0.11.0 三通道通知
+
+下载完成通知按 agent 当前状态分三条：
+
+| agent 状态 | 投递路径 | agent 感知时机 |
+|---|---|---|
+| 未收束 + 下一条 API 调用 ≤ 30s | **真同步**：bundle 魔改暴露 `__sessionHooks`，插件注册 `agent/pre-step` adjudicator（order 999），HBR 推 `payload.messages` | **当前轮** LLM API messages 看到 HBR |
+| 未收束 + 超 30s 未发新 API | 异步兜底：timer 触发 `deliverAsync` → `deferred:resolve` → host followUp 入队 | 下一轮 input 看到 HBR |
+| 已收束 | 异步 triggerTurn：host `deliverCustomMessage` → triggerTurn 立即开新 turn | 新 turn input 看到 HBR |
+
+完整机制见 `docs/v0.11.0-真同步投递完整机制.md`（HBR 7 属性 / 4 commit 修复链 / 三种时机表）。
+
+### 真同步部署前置（必要）
+
+宿主 bundle 魔改一行暴露 hooks registry：
+
+```js
+// bundle/index.js:171120
+globalThis.__sessionHooks = j;
+```
+
+宿主升级后必须重做魔改（备份 `D:\HanakoWorks\_temp\bundle-index.js.0.814.0-魔改前.bak`）。未魔改时 plugin 静默降级为纯异步 triggerTurn 路径。
+
+### HBR 根标签 7 属性
+
+```xml
+<hana-background-result
+  task-id="..."
+  status="success|failed|aborted"
+  event-status="done|cancelled|error"
+  source="system"
+  plugin="hana-downloader"
+  type="download"
+  action="none|decide">
+...
+</hana-background-result>
+```
+
+**agent 优先看 `event-status`**（新语义），`status` 仅用于兼容宿主 interlude / 前端 detail。
+
+**取消来源溯源**：每次取消记录 `canceledBy` 来源（卡片按钮 = `user`，Agent 工具 = `agent`），贯穿快照、wait 返回值与投递消息；用户手动取消的通知附「非故障，无需自动重试或换源」提示，防止 Agent 将人为干预误判为故障。
+
+## 三、功能清单
+
+### 3.1 下载工具 download-file
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `url` | 是 | 下载地址（http/https） |
+| `saveDir` | 否 | 保存目录绝对路径；留空用插件默认目录 |
+| `fileName` | 否 | 自定义文件名；留空从 URL 推断 |
+| `speedLimit` | 否 | 限速（字节/秒） |
+| `startDelayMs` | 否 | 准备态延迟（毫秒），默认 0 |
+
+返回文本自足、含任务 ID 与免回查引导。网络策略：代理优先（CONNECT 隧道），失败自动降级直连。完整性红线：chunked（无 Content-Length）传输半途断连一律判 failed 并删除半成品。
+
+### 3.2 命令型下载 download-command
+
+`git-clone` 与 `pnpm-install` 白名单命令（不做 shell 拼接），解析输出流映射为阶段文案与百分比；Windows 下以 taskkill 杀进程树取消。
+
+### 3.3 回查工具 download-wait
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `taskId` | 是 | 任务 ID |
+
+立即返回当前事实快照（state / percent / speed / eta / error / filePath / stalled / consumedByWait / deferredAutoRegistered），不阻塞。**可选回查，不强制**：任务未完成时可直接收束，下载完成会自动唤醒；若想主动确认进度或提前拿终态，可调用本工具。
+
+### 3.4 取消工具 download-cancel
+
+终止指定任务（来源签名为 agent），删除半成品文件。
+
+### 3.5 跨会话管理器
+
+`/manager` 页面集中展示所有会话的下载任务：列表、筛选（全部/在途/已完成/失败）、搜索、行内详情、打开文件/所在文件夹、默认下载目录设置。样式自包含浅/深双色板并跟随宿主主题广播切换。
+
+## 四、设置项
+
+| 设置 | 默认 | 说明 |
+|------|------|------|
+| `defaultSaveDir` | 空 | 默认保存目录，留空用插件数据目录 downloads/ |
+| `stallTimeoutMs` | 30000 | 停滞判定阈值（毫秒） |
+| `waitWatchMode` | false | wait 守望模式开关；当前默认快照模式（wait 立即返回，Agent 收束后由 deferred 自动唤醒） |
+
+## 五、项目结构
+
+```
+manifest.json                插件声明（full-access）
+index.js                     生命周期：onload 注册 agent/pre-step adjudicator（order 999）+ 遗留任务恢复
+lib/delivery.js              投递权威：tailSettled / buildEntry 7 属性 / enqueueSync / injectForSession / deliverAsync
+lib/dlcore.js                任务管理器：流式下载/测速/限速/停滞监测/onceFinal/canceledBy/consumedByWait/持久化
+lib/deferred.js              deferred 占位 helper（register/resolve + 全局 bus 兜底）
+lib/progress-parsers.js      git/pnpm 输出解析（纯函数）
+tools/download-file.js       URL 下载工具（创建即注册占位）
+tools/download-command.js    命令型下载工具（创建即注册占位）
+tools/download-wait.js       回查工具（立即快照）
+tools/download-cancel.js     取消工具
+routes/download.js           卡片页/管理器页/status/list/cancel/prepare/reveal/settings 路由
+app/card.css|card.js         进度卡片前端（自包含色板、折叠交互、报高）
+app/manager.css|manager.js   跨会话管理器前端
+docs/v0.11.0-真同步投递完整机制.md   完整机制文档（落地）
+```
+
+---
+
+## 六、宿主魔改部署步骤
+
+```powershell
+# 1. 备份 bundle（重做魔改前恢复）
+$bundle = "$env:USERPROFILE\.hanako\artifacts\server\0.814.0-win32-x64\bundle\index.js"
+Copy-Item $bundle "D:\HanakoWorks\_temp\bundle-index.js.0.814.0-魔改前.bak" -Force
+
+# 2. 在 bundle/index.js 第 171120 行附近加一行：
+#    globalThis.__sessionHooks = j;
+#    （plugin index.js onload 通过 globalThis.__sessionHooks 注册 adjudicator）
+
+# 3. 重启宿主
+pwsh -File D:\HanakoWorks\_tools\restart-hana\restart-hana-reliable.ps1
+```
+
+**调试日志**（运行时写，不影响功能）：
+- `D:\HanakoWorks\_temp\inject-content.log`：injectForSession 实际注入的 content 头部
+- `D:\HanakoWorks\_temp\inject-debug.log`：injectForSession 入口 + pending.size + 匹配
+- `D:\HanakoWorks\_temp\stall-debug.log`：onload / adjudicator called / injected 计数
+
+---
+
+*作者：John Galt · dahua · hanako*
